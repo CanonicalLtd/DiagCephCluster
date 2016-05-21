@@ -2,7 +2,7 @@ import optparse
 import paramiko
 
 from helpers.exceptions import (SSHCredsNotFoundError, ConnectionFailedError,
-                                TimeoutError)
+                                TimeoutError, InitSystemNotSupportedError)
 from helpers.decorators import timeout
 
 
@@ -12,13 +12,16 @@ class TroubleshootCeph(object):
     '''
     GOOD_HEALTH = ['HEALTH_OK']
     BAD_HEALTH = ['HEALTH_WARN']
+    init_script = './scripts/check_init.sh'
+    init_type = ''
 
     def __init__(self):
         self.parser = self._get_opt_parser()
         self.options, self.arguments = self.parser.parse_args()
 
         if not (self.options.host and self.options.user):
-            msg = 'Hostname and  Username are compulsary, see help'
+            msg = 'Hostname and  Username are compulsary for ssh provider,\
+                   see help'
             raise SSHCredsNotFoundError(msg)
 
         try:
@@ -27,6 +30,15 @@ class TroubleshootCeph(object):
                                                    self.options.password)
         except Exception:
             raise ConnectionFailedError('Couldnot connect to host')
+
+        self.init_type = self._get_init_type(self.connection).strip()
+        if self.init_type == 'none':
+            raise InitSystemNotSupportedError()
+
+    def _get_init_type(self, connection):
+        cmd = open(self.init_script, 'r').read()
+        out, err = self._execute_command(connection, cmd)
+        return out.read()
 
     def _get_opt_parser(self):
         desc = 'Command line parser for CephDiagnoseTool'
@@ -58,9 +70,7 @@ class TroubleshootCeph(object):
 
         except TimeoutError as err:
             # cluster is screwed
-            # Best guess some mon machines are down
-            # just printing error for now
-            # TODO
+            # Best guess some mon machines are down, print error for now
             print err
             return
 
@@ -96,14 +106,19 @@ class TroubleshootCeph(object):
                         print 'restarting ceph services'
                         mon_addr = mon['addr'].split(':')[0]
 
-                        self._restart_ceph_services(mon_addr,
-                                                    self.options.user,
-                                                    self.options.password)
+                        self._restart_ceph_mon_services(mon_addr,
+                                                        self.options.user,
+                                                        self.options.password)
 
-    def _restart_ceph_services(self, addr, username, password):
+    def _restart_ceph_mon_services(self, addr, username, password):
         connection = self._get_connection(addr, username, password)
-        self._execute_command(connection, 'sudo start ceph-all')
-        print addr + 'Restart successful'
+        if self.init_type in ['upstart', 'sysv-init']:
+            cmd = 'sudo start ceph-mon-all'
+        else:
+            cmd = 'sudo systemctl stop ceph-mon.service'
+        self._execute_command(connection, cmd)
+
+        print addr + ' Restart successful'
 
     @timeout(10)
     def _get_eof(self, stream, command=''):

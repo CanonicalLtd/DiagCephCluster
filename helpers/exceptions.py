@@ -11,3 +11,8 @@ class ConnectionFailedError(Exception):
 class TimeoutError(Exception):
     def __init__(self, message):
         super(TimeoutError, self).__init__(message)
+
+
+class InitSystemNotSupportedError(Exception):
+    def __init__(self, message):
+        super(InitSystemNotSupportedError, self).__init__(message)
