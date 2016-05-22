@@ -44,16 +44,16 @@ class TroubleshootCeph(object):
         if cls.options.provider == 'juju':
             raise NotImplementedError('#TODO Feature')
 
-        if not (cls.options.host and cls.options.user):
-            msg = 'Hostname and  Username are compulsary for ssh provider,\
-                   see help'
+        if (not (cls.options.host and cls.options.user) and
+            not (cls.options.host and cls.options.ssh_key and
+                 cls.options.user)):
+            msg = 'Credentials insufficient, see help'
             raise SSHCredsNotFoundError(msg)
 
         try:
-            cls.connection = cls._get_connection(cls.options.host,
-                                                 cls.options.user,
-                                                 cls.options.password)
-        except Exception:
+            cls.connection = cls._get_connection(cls.options.host)
+        except Exception as err:
+            print err
             raise ConnectionFailedError('Couldnot connect to host')
 
         cls.init_type = self._get_init_type(cls.connection).strip()
@@ -66,7 +66,11 @@ class TroubleshootCeph(object):
         return out.read()
 
     def _get_opt_parser(self):
-        desc = 'Command line parser for CephDiagnoseTool'
+        desc = ('Command line parser for CephDiagnoseTool \n'
+                'Login method supported are: \n'
+                'username + password + hostname, '
+                'username + hostname + ssh_key_location, '
+                'juju #TODO')
 
         parser = optparse.OptionParser(description=desc)
         parser.add_option('-H', '--host', dest='host', default=None)
@@ -75,14 +79,20 @@ class TroubleshootCeph(object):
         parser.add_option('-P', '--provider', dest='provider', default='ssh',
                           choices=['ssh', 'juju'],
                           help='currently supports ssh')
+        parser.add_option('-k', '--ssh_key', dest='ssh_key', default=None)
         return parser
 
     @classmethod
-    def _get_connection(cls, hostname, username, password):
+    def _get_connection(cls, hostname):
         client = paramiko.SSHClient()
         client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        client.connect(hostname=hostname, username=username,
-                       password=password)
+        if cls.options.ssh_key is None:
+            client.connect(hostname=hostname, username=cls.options.user,
+                           password=cls.options.password)
+        else:
+            k = paramiko.RSAKey.from_private_key_file(cls.options.ssh_key)
+            client.connect(hostname=hostname, username=cls.options.user,
+                           pkey=k)
         return client
 
     @classmethod
@@ -195,9 +205,7 @@ class TroubleshootCephMon(TroubleshootCeph):
                machine.is_monmap_correct is False):
                 print 'Injecting monmap to: ' + machine.host
 
-                self._restart_ceph_mon_service('stop', machine.host,
-                                               self.options.user,
-                                               self.options.password)
+                self._restart_ceph_mon_service('stop', machine.host)
 
                 machine.connection.open_sftp().put(monmap_loc,
                                                    '/tmp/monmap')
@@ -206,9 +214,7 @@ class TroubleshootCephMon(TroubleshootCeph):
 
                 self._execute_command(machine.connection, cmd)
 
-                self._restart_ceph_mon_service('start', machine.host,
-                                               self.options.user,
-                                               self.options.password)
+                self._restart_ceph_mon_service('start', machine.host)
 
     def _find_correct_monmap(self, machine_list):
         mon_host = []
@@ -241,16 +247,12 @@ class TroubleshootCephMon(TroubleshootCeph):
 
     def _save_monmap(self, mon_host, loc):
 
-        self._restart_ceph_mon_service('stop', mon_host.host,
-                                       self.options.user,
-                                       self.options.password)
+        self._restart_ceph_mon_service('stop', mon_host.host)
 
         cmd = 'sudo ceph mon getmap -o /tmp/monmap'
         out, err = self._execute_command(mon_host.connection, cmd)
         mon_host.connection.open_sftp().get('/tmp/monmap', loc)
-        self._restart_ceph_mon_service('start', mon_host.host,
-                                       self.options.user,
-                                       self.options.password)
+        self._restart_ceph_mon_service('start', mon_host.host)
 
     def _troubleshoot_mon_socket(self):
         '''
@@ -266,8 +268,7 @@ class TroubleshootCephMon(TroubleshootCeph):
 
         for i in mon_list:
             try:
-                connection = self._get_connection(i, self.options.user,
-                                                  self.options.password)
+                connection = self._get_connection(i)
             except ConnectionFailedError as err:
                 dead_mon = MonObject(i, 'DEAD')
                 machines.append(dead_mon)
@@ -312,12 +313,10 @@ class TroubleshootCephMon(TroubleshootCeph):
                     print 'restarting ceph services'
                     mon_addr = mon['addr'].split(':')[0]
 
-                    self._restart_ceph_mon_service('start', mon_addr,
-                                                   self.options.user,
-                                                   self.options.password)
+                    self._restart_ceph_mon_service('start', mon_addr)
 
-    def _restart_ceph_mon_service(self, cmd, addr, username, password):
-        connection = self._get_connection(addr, username, password)
+    def _restart_ceph_mon_service(self, cmd, addr):
+        connection = self._get_connection(addr)
         if self.init_type in ['upstart', 'sysv-init']:
             cmd = 'sudo ' + cmd + ' ceph-mon-all'
         else:
