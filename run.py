@@ -1,5 +1,6 @@
 from ConfigParser import ConfigParser
 import optparse
+import os
 import paramiko
 import re
 
@@ -9,10 +10,21 @@ from helpers.decorators import timeout
 
 
 class MonObject(object):
-    def __init__(self, host, connection=None, admin_socket=None):
+    def __init__(self, host, ssh_status, connection=None, admin_socket=None):
         self.host = host
         self.admin_socket = admin_socket
         self.connection = connection
+        self.ssh_status = ssh_status
+        self.mon_id = self.get_id(admin_socket)
+        self.is_monmap_correct = False
+
+    def get_id(self, admin_socket):
+        if admin_socket is None:
+            return None
+
+        mon_id = admin_socket[9:]
+        mon_id = mon_id[:-5]
+        return mon_id
 
 
 class TroubleshootCeph(object):
@@ -150,40 +162,123 @@ class TroubleshootCephMon(TroubleshootCeph):
         try:
             self.check_ceph_cli_health(self.connection)
         except TimeoutError:
-            print "Didn't work, trying deeper probe"
+            print "Restarting servers not in quorum didn't work,"
+            print 'trying deeper probe'
+
+        # TODO Clock Skew
+
+        self.machines = self._get_machine_objects()
+
+        print 'Inject correct monmap to machines with incorrect monmap?'
+        print '(yes/no) (default no)?',
+        response = raw_input()
+
+        if response != 'yes':
+            print 'not proceeding with updating machines, aborting'
+            return
+
+        monmap_loc = self._find_correct_monmap(self.machines)
+        if monmap_loc is None:
+            print 'No Mon has correct monmap, recovery impossible, aborting'
+            # return
+
+        self._inject_mon_map(monmap_loc, self.machines)
+
+        try:
+            self.check_ceph_cli_health(self.connection)
+        except TimeoutError:
+            print "Injecting Monmap didn't work, probably network issue"
+
+    def _inject_mon_map(self, monmap_loc, machine_list):
+        for machine in machine_list:
+            if (machine.ssh_status == 'LIVE' and
+               machine.is_monmap_correct is False):
+                print 'Injecting monmap to: ' + machine.host
+
+                self._restart_ceph_mon_service('stop', machine.host,
+                                               self.options.user,
+                                               self.options.password)
+
+                machine.connection.open_sftp().put('/tmp/monmap',
+                                                   '/tmp/monmap')
+                cmd = 'sudo ceph-mon -i ' + machine.mon_id +\
+                    ' --inject-monmap /tmp/monmap'
+
+                self._execute_command(machine.connection, cmd)
+
+                self._restart_ceph_mon_service('start', machine.host,
+                                               self.options.user,
+                                               self.options.password)
+
+    def _find_correct_monmap(self, machine_list):
+        mon_host = []
+        for machine in machine_list:
+            mon_host.append(machine.host)
+        mon_host.sort()
+        correct_mon_host = None
+
+        for machine in machine_list:
+            if (machine.ssh_status == 'LIVE' and
+               machine.admin_socket is not None):
+
+                    cmd = 'sudo ceph --admin-daemon /var/run/ceph/' +\
+                        machine.admin_socket + ' mon_status'
+                    out, err = self._execute_command(machine.connection, cmd)
+                    monmap = eval(out.read())['monmap']['mons']
+                    monmap_host = sorted([i['addr'].split(':')[0]
+                                         for i in monmap])
+                    if monmap_host == mon_host:
+                        correct_mon_host = machine if correct_mon_host\
+                            is None else correct_mon_host
+                        machine.is_monmap_correct = True
+
+        if correct_mon_host is None:
+            return None
+
+        loc = '/tmp/monmap'
+        self._save_monmap(correct_mon_host, loc)
+        return loc
+
+    def _save_monmap(self, mon_host, loc):
+
+        self._restart_ceph_mon_service('stop', mon_host.host,
+                                       self.options.user,
+                                       self.options.password)
+
+        cmd = 'sudo ceph mon getmap -o /tmp/monmap'
+        out, err = self._execute_command(mon_host.connection, cmd)
+        mon_host.connection.open_sftp().get('/tmp/monmap', loc)
+        self._restart_ceph_mon_service('start', mon_host.host,
+                                       self.options.user,
+                                       self.options.password)
 
     def _troubleshoot_mon_socket(self):
         '''
             Troubleshoot mon issues using monitor sockets when ceph cli
             doesnt work i.e. quorum is not being established
         '''
-        self.live_machines, self.dead_machines = self._get_machine_objects()
-
-        if len(self.dead_machines) >= len(self.live_machines):
-            # TODO Network issues
-            print 'Dead machines more than Live machines'
-            print 'Impossible to achieve quorum, aborting'
-            exit()
+        # TODO
+        pass
 
     def _get_machine_objects(self):
         mon_list = self._get_mon_list()
-        live_machines, dead_machines = [], []
+        machines = []
 
         for i in mon_list:
             try:
                 connection = self._get_connection(i, self.options.user,
                                                   self.options.password)
             except ConnectionFailedError as err:
-                mon = MonObject(i)
-                dead_machines.append(mon)
+                dead_mon = MonObject(i, 'DEAD')
+                machines.append(dead_mon)
             else:
 
                 out, err = self._execute_command(connection,
                                                  'ls /var/run/ceph/')
                 socket = self._find_mon_socket(out.read().split('\n'))
-                mon = MonObject(i, connection, socket)
-                live_machines.append(mon)
-        return live_machines, dead_machines
+                live_mon = MonObject(i, 'LIVE', connection, socket)
+                machines.append(live_mon)
+        return machines
 
     def _find_mon_socket(self, out_list):
         for i in out_list:
@@ -193,11 +288,13 @@ class TroubleshootCephMon(TroubleshootCeph):
 
     def _get_mon_list(self):
         ''' Parse ceph.conf and get mon list '''
-        self.connection.open_sftp().get('/etc/ceph/ceph.conf', './ceph.conf')
+        self.connection.open_sftp().get('/etc/ceph/ceph.conf',
+                                        '/tmp/ceph.conf')
         Config = ConfigParser()
-        Config.read('./ceph.conf')
+        Config.read('/tmp/ceph.conf')
         mon_list = Config.get('global', 'mon host').split(' ')
         mon_list = [i.split(':', 1)[0] for i in mon_list]
+        os.system('rm /tmp/ceph.conf')
         return mon_list
 
     def _restart_dead_mon_daemons(self):
@@ -215,25 +312,23 @@ class TroubleshootCephMon(TroubleshootCeph):
                     print 'restarting ceph services'
                     mon_addr = mon['addr'].split(':')[0]
 
-                    self._restart_ceph_mon_service(mon_addr,
+                    self._restart_ceph_mon_service('start', mon_addr,
                                                    self.options.user,
                                                    self.options.password)
 
-    def _restart_ceph_mon_service(self, addr, username, password):
+    def _restart_ceph_mon_service(self, cmd, addr, username, password):
         connection = self._get_connection(addr, username, password)
         if self.init_type in ['upstart', 'sysv-init']:
-            cmd = 'sudo start ceph-mon-all'
+            cmd = 'sudo ' + cmd + ' ceph-mon-all'
         else:
-            cmd = 'sudo systemctl stop ceph-mon.service'
+            cmd = 'sudo systemctl ' + cmd + ' ceph-mon.service'
         self._execute_command(connection, cmd)
-
         print addr + ' Restart successful'
 
 
 if __name__ == "__main__":
     TroubleshootCeph = TroubleshootCeph()
     cluster_status = TroubleshootCeph.start_troubleshoot()
-
     if cluster_status == 'HEALTH_OK':
         print 'All good up here :-)'
         exit()
