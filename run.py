@@ -1,9 +1,18 @@
+from ConfigParser import ConfigParser
 import optparse
 import paramiko
+import re
 
 from helpers.exceptions import (SSHCredsNotFoundError, ConnectionFailedError,
                                 TimeoutError, InitSystemNotSupportedError)
 from helpers.decorators import timeout
+
+
+class MonObject(object):
+    def __init__(self, host, connection=None, admin_socket=None):
+        self.host = host
+        self.admin_socket = admin_socket
+        self.connection = connection
 
 
 class TroubleshootCeph(object):
@@ -79,15 +88,23 @@ class TroubleshootCeph(object):
             self._get_eof(output, command)
             cluster_status = output.read().split(' ')[0].strip()
         except TimeoutError as err:
-            # ceph cli is not working we need to use ceph admin sockets
+            # ceph cli is not working i.e. quorum is not being established
+            # hence we need to use ceph admin sockets
             return None
 
         return cluster_status
 
     @classmethod
-    def check_ceph_cli_health(cls, connection):
+    @timeout(10)
+    def check_ceph_cli_health(cls, connection, command='ceph health'):
         (output, err) = cls._execute_command(connection, 'sudo ceph health')
-        return output.read().split(' ')[0].strip()
+        status = output.read().split(' ')[0].strip()
+
+        if status == 'HEALTH_OK':
+            print 'Ceph cluster working again'
+            exit()
+        elif status == 'HEALTH_WARN':
+            print "Didn't work, trying deeper probe"
 
     @timeout(10)
     def _get_eof(self, stream, command):
@@ -101,12 +118,22 @@ class TroubleshootCephMon(TroubleshootCeph):
         self.is_ceph_cli = is_ceph_cli
 
     def troubleshoot_mon(self):
-        if self.is_ceph_cli:
-            self.troubleshoot_mon_cli()
-        else:
-            self.troubleshoot_mon_socket()
+        '''
+            Based on ceph mon quorum status  troubleshoot using either
+            ceph cli or ceph mon admin sockets
+        '''
 
-    def troubleshoot_mon_cli(self):
+        if self.is_ceph_cli:
+            self._troubleshoot_mon_cli()
+        else:
+            self._troubleshoot_mon_socket()
+
+    def _troubleshoot_mon_cli(self):
+        '''
+            Troubleshoot mon issues using ceph cli i.e. the quorum has been
+            established
+        '''
+
         print 'MON Status : ', cluster_status
         print '\nProbable cause Ceph mon service not running in some machines'
         print 'Try & start service in the machines not in quorum',
@@ -120,9 +147,58 @@ class TroubleshootCephMon(TroubleshootCeph):
         # Start ceph cli check_list
         self._restart_dead_mon_daemons()
 
-        if self.check_ceph_cli_health(self.connection) == 'HEALTH_OK':
-            print 'Ceph cluster working again'
-            return
+        try:
+            self.check_ceph_cli_health(self.connection)
+        except TimeoutError:
+            print "Didn't work, trying deeper probe"
+
+    def _troubleshoot_mon_socket(self):
+        '''
+            Troubleshoot mon issues using monitor sockets when ceph cli
+            doesnt work i.e. quorum is not being established
+        '''
+        self.live_machines, self.dead_machines = self._get_machine_objects()
+
+        if len(self.dead_machines) >= len(self.live_machines):
+            # TODO Network issues
+            print 'Dead machines more than Live machines'
+            print 'Impossible to achieve quorum, aborting'
+            exit()
+
+    def _get_machine_objects(self):
+        mon_list = self._get_mon_list()
+        live_machines, dead_machines = [], []
+
+        for i in mon_list:
+            try:
+                connection = self._get_connection(i, self.options.user,
+                                                  self.options.password)
+            except ConnectionFailedError as err:
+                mon = MonObject(i)
+                dead_machines.append(mon)
+            else:
+
+                out, err = self._execute_command(connection,
+                                                 'ls /var/run/ceph/')
+                socket = self._find_mon_socket(out.read().split('\n'))
+                mon = MonObject(i, connection, socket)
+                live_machines.append(mon)
+        return live_machines, dead_machines
+
+    def _find_mon_socket(self, out_list):
+        for i in out_list:
+            if re.search(r"^ceph-mon\..*\.asok$", i.strip()) is not None:
+                return i
+        return None
+
+    def _get_mon_list(self):
+        ''' Parse ceph.conf and get mon list '''
+        self.connection.open_sftp().get('/etc/ceph/ceph.conf', './ceph.conf')
+        Config = ConfigParser()
+        Config.read('./ceph.conf')
+        mon_list = Config.get('global', 'mon host').split(' ')
+        mon_list = [i.split(':', 1)[0] for i in mon_list]
+        return mon_list
 
     def _restart_dead_mon_daemons(self):
         (output, err) = self._execute_command(self.connection,
@@ -142,9 +218,6 @@ class TroubleshootCephMon(TroubleshootCeph):
                     self._restart_ceph_mon_service(mon_addr,
                                                    self.options.user,
                                                    self.options.password)
-
-    def troubleshoot_mon_socket(self):
-        print '# TODO'
 
     def _restart_ceph_mon_service(self, addr, username, password):
         connection = self._get_connection(addr, username, password)

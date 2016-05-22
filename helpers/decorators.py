@@ -11,7 +11,11 @@ def timeout(seconds=20):
             raise TimeoutError("'%s' command did not return" % command)
 
         def wrapper(*args, **kwargs):
-            signal.signal(signal.SIGALRM, partial(_handle_timeout, args[2]))
+            if len(args) >= 3:
+                signal.signal(signal.SIGALRM, partial(_handle_timeout,
+                                                      args[2]))
+            else:
+                signal.signal(signal.SIGALRM, partial(_handle_timeout, None))
             signal.alarm(seconds)
             try:
                 result = func(*args, **kwargs)
