@@ -20,7 +20,7 @@ python run.py -H host_ip -u username -p password
     -H host_ip, --host host_ip                                          HOST_IP on which to connect
     -u username, --user username                                        username on the HOST_IP
     -p password, --pass password                                        password of the user(optional) 
-
+    -P (juju, ssh)  --provider (juju, ssh)                              the provider to use(juju doesnt require most of the above parameters, currently only supports ssh) 
 
 ## License
 MIT Licensed
