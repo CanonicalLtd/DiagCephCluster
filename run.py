@@ -180,7 +180,7 @@ class TroubleshootCephMon(TroubleshootCeph):
         monmap_loc = self._find_correct_monmap(self.machines)
         if monmap_loc is None:
             print 'No Mon has correct monmap, recovery impossible, aborting'
-            # return
+            return
 
         self._inject_mon_map(monmap_loc, self.machines)
 
@@ -199,7 +199,7 @@ class TroubleshootCephMon(TroubleshootCeph):
                                                self.options.user,
                                                self.options.password)
 
-                machine.connection.open_sftp().put('/tmp/monmap',
+                machine.connection.open_sftp().put(monmap_loc,
                                                    '/tmp/monmap')
                 cmd = 'sudo ceph-mon -i ' + machine.mon_id +\
                     ' --inject-monmap /tmp/monmap'
