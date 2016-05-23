@@ -3,6 +3,7 @@ import optparse
 import os
 import paramiko
 import re
+import time
 
 from helpers.exceptions import (SSHCredsNotFoundError, ConnectionFailedError,
                                 TimeoutError, InitSystemNotSupportedError)
@@ -107,7 +108,7 @@ class TroubleshootCeph(object):
         cluster_status = None
 
         try:
-            self._get_eof(output, command)
+            cls._get_eof(output, command)
             cluster_status = output.read().split(' ')[0].strip()
         except TimeoutError as err:
             # ceph cli is not working i.e. quorum is not being established
@@ -118,7 +119,7 @@ class TroubleshootCeph(object):
 
     @classmethod
     @timeout(10)
-    def check_ceph_cli_health(cls, connection, command='ceph health'):
+    def check_ceph_cli_health(cls, connection, command='sudo ceph health'):
         (output, err) = cls._execute_command(connection, 'sudo ceph health')
         status = output.read().split(' ')[0].strip()
 
@@ -128,8 +129,9 @@ class TroubleshootCeph(object):
         elif status == 'HEALTH_WARN':
             print "Didn't work, trying deeper probe"
 
-    @timeout(10)
-    def _get_eof(self, stream, command):
+    @classmethod
+    @timeout(20)
+    def _get_eof(cls, stream, command):
         while not stream.channel.eof_received:
             pass
         return stream.channel.eof_received
@@ -169,12 +171,14 @@ class TroubleshootCephMon(TroubleshootCeph):
         # Start ceph cli check_list
         self._restart_dead_mon_daemons()
 
+        # Let's wait for sometime before getting ceph health status
+        time.sleep(10)
         try:
             self.check_ceph_cli_health(self.connection)
         except TimeoutError:
             print "Restarting servers not in quorum didn't work,"
             print 'trying deeper probe'
-
+        print 'here '
         # TODO Clock Skew
 
         self.machines = self._get_machine_objects()
@@ -194,6 +198,8 @@ class TroubleshootCephMon(TroubleshootCeph):
 
         self._inject_mon_map(monmap_loc, self.machines)
 
+        # Let's wait for sometime before getting ceph health status
+        time.sleep(10)
         try:
             self.check_ceph_cli_health(self.connection)
         except TimeoutError:
@@ -227,30 +233,42 @@ class TroubleshootCephMon(TroubleshootCeph):
             if (machine.ssh_status == 'LIVE' and
                machine.admin_socket is not None):
 
-                    cmd = 'sudo ceph --admin-daemon /var/run/ceph/' +\
-                        machine.admin_socket + ' mon_status'
-                    out, err = self._execute_command(machine.connection, cmd)
-                    monmap = eval(out.read())['monmap']['mons']
-                    monmap_host = sorted([i['addr'].split(':')[0]
-                                         for i in monmap])
-                    if monmap_host == mon_host:
-                        correct_mon_host = machine if correct_mon_host\
-                            is None else correct_mon_host
-                        machine.is_monmap_correct = True
+                cmd = 'sudo ceph --admin-daemon /var/run/ceph/' +\
+                    machine.admin_socket + ' mon_status'
+                out, err = self._execute_command(machine.connection, cmd)
+                monmap = eval(out.read())['monmap']['mons']
+                monmap_host = sorted([i['addr'].split(':')[0]
+                                     for i in monmap])
+                if monmap_host == mon_host:
+                    loc = '/tmp/monmap'
+                    if correct_mon_host is None:
+                        try:
+                            self._save_monmap(machine, loc)
+                        except TimeoutError:
+                            pass
+                        else:
+                            correct_mon_host = machine
+                    machine.is_monmap_correct = True
 
         if correct_mon_host is None:
             return None
-
-        loc = '/tmp/monmap'
-        self._save_monmap(correct_mon_host, loc)
         return loc
 
     def _save_monmap(self, mon_host, loc):
-
+        '''
+            Try to save monmap of a mon node which has the correct one
+            There maybe scenarios when ceph mon getmap may take alot of
+            may timeout. In that case raise TimeoutError and try next
+            correct node
+        '''
         self._restart_ceph_mon_service('stop', mon_host.host)
 
         cmd = 'sudo ceph mon getmap -o /tmp/monmap'
         out, err = self._execute_command(mon_host.connection, cmd)
+        try:
+            self._get_eof(out, cmd)
+        except TimeoutError:
+            raise TimeoutError('ceph mon getmap timed out')
         mon_host.connection.open_sftp().get('/tmp/monmap', loc)
         self._restart_ceph_mon_service('start', mon_host.host)
 
@@ -322,7 +340,7 @@ class TroubleshootCephMon(TroubleshootCeph):
         else:
             cmd = 'sudo systemctl ' + cmd + ' ceph-mon.service'
         self._execute_command(connection, cmd)
-        print addr + ' Restart successful'
+        print addr + ': ' + cmd + ' successful'
 
 
 if __name__ == "__main__":
@@ -335,5 +353,4 @@ if __name__ == "__main__":
         TroubleshootCephMon = TroubleshootCephMon(is_ceph_cli=False)
     else:
         TroubleshootCephMon = TroubleshootCephMon(is_ceph_cli=True)
-
     TroubleshootCephMon.troubleshoot_mon()
