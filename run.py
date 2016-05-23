@@ -150,14 +150,51 @@ class TroubleshootCephMon(TroubleshootCeph):
         if self.is_ceph_cli:
             self._troubleshoot_mon_cli()
         else:
-            self._troubleshoot_mon_socket()
+            print 'ceph cli not working'
+            self._troubleshoot_mon_no_cli()
+
+    def _troubleshoot_mon_no_cli(self):
+        '''
+            Troubleshoot mon issues using monitor sockets when ceph cli
+            doesnt work i.e. quorum is not being established
+        '''
+        # Lets store all the machine list by parsing the /etc/ceph.conf
+        self.machines = self._get_machine_objects()
+
+        # Starting checklist when ceph cli is down
+        # first we restart all machines as don't have many options here
+
+        print '\nProbable cause Ceph mon service not running in some machines'
+        print 'Try & start the mon service in every machine',
+        print '(yes/no) (default no)?',
+        response = raw_input()
+
+        if response != 'yes':
+            print 'not proceeding with starting machines, aborting'
+            return
+
+        self._restart_all_machines()
+
+        time.sleep(10)
+        try:
+            self.check_ceph_cli_health(self.connection)
+        except TimeoutError:
+            print "Restarting servers not in quorum didn't work,"
+            print 'trying deeper probe'
+
+        # Now let's call the common check list
+        self._troubleshoot_mon_common()
+
+    def _restart_all_machines(self):
+        for machine in self.machines:
+            if machine.ssh_status == 'LIVE':
+                self._restart_ceph_mon_service('start', machine.host)
 
     def _troubleshoot_mon_cli(self):
         '''
             Troubleshoot mon issues using ceph cli i.e. the quorum has been
             established
         '''
-
         print 'MON Status : ', cluster_status
         print '\nProbable cause Ceph mon service not running in some machines'
         print 'Try & start service in the machines not in quorum',
@@ -179,17 +216,24 @@ class TroubleshootCephMon(TroubleshootCeph):
             print "Restarting servers not in quorum didn't work,"
             print 'trying deeper probe'
 
+        # Now let's call the common checklist
+        self._troubleshoot_mon_common()
+
+    def _troubleshoot_mon_common(self):
+        ''' Common checklist for both when ceph cli is working or not '''
+
         # Lets store all the machine list for future use
         self.machines = self._get_machine_objects()
 
         print 'Trying to detect for Clock Skew'
+        status = None
         try:
             status = self._detect_clock_skew(self.connection)
         except TimeoutError:
             print 'ceph health command did not work proceeding to next phase'
 
         if status is None:
-            print 'No Clock Skew detected proceeding to deeper probe'
+            print 'Could not detect any Clock Skew, proceeding to deeper probe'
         else:
             print 'Clock Skew detected for', status, 'Try start ntp server?'
             print 'We assume ntpd is installed here'
@@ -333,14 +377,6 @@ class TroubleshootCephMon(TroubleshootCeph):
             raise TimeoutError('ceph mon getmap timed out')
         mon_host.connection.open_sftp().get('/tmp/monmap', loc)
         self._restart_ceph_mon_service('start', mon_host.host)
-
-    def _troubleshoot_mon_socket(self):
-        '''
-            Troubleshoot mon issues using monitor sockets when ceph cli
-            doesnt work i.e. quorum is not being established
-        '''
-        # TODO
-        pass
 
     def _get_machine_objects(self):
         mon_list = self._get_mon_list()
