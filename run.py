@@ -178,10 +178,36 @@ class TroubleshootCephMon(TroubleshootCeph):
         except TimeoutError:
             print "Restarting servers not in quorum didn't work,"
             print 'trying deeper probe'
-        print 'here '
-        # TODO Clock Skew
 
+        # Lets store all the machine list for future use
         self.machines = self._get_machine_objects()
+
+        print 'Trying to detect for Clock Skew'
+        try:
+            status = self._detect_clock_skew(self.connection)
+        except TimeoutError:
+            print 'ceph health command did not work proceeding to next phase'
+
+        if status is None:
+            print 'No Clock Skew detected proceeding to deeper probe'
+        else:
+            print 'Clock Skew detected for', status, 'Try start ntp server?'
+            print 'We assume ntpd is installed here'
+            print '(yes/no) (default no)?',
+            response = raw_input()
+
+            if response != 'yes':
+                print 'aborting'
+                exit()
+            else:
+                self._correct_skew(status)
+
+        # Let's wait for sometime before getting ceph health status
+        time.sleep(10)
+        try:
+            self.check_ceph_cli_health(self.connection)
+        except TimeoutError:
+            print "Restarting ntpd did not work, probing deeper"
 
         print 'Inject correct monmap to machines with incorrect monmap?'
         print '(yes/no) (default no)?',
@@ -204,6 +230,42 @@ class TroubleshootCephMon(TroubleshootCeph):
             self.check_ceph_cli_health(self.connection)
         except TimeoutError:
             print "Injecting Monmap didn't work, probably network issue"
+
+    def _correct_skew(self, skew_list):
+        for mon in skew_list:
+            for machine in self.machines:
+                if mon == machine.mon_id:
+                    if self.init_type == 'systemd':
+                        cmd = 'sudo systemctl restart ntp.service'
+                    else:
+                        cmd = 'sudo service ntp restart'
+                    out, err = self._execute_command(machine.connection, cmd)
+                    try:
+                        self._get_eof(out, cmd)
+                    except TimeoutError:
+                        print "Couldn't restart ntp for: ", mon
+                    else:
+                        print 'Restart successful for: ', mon
+
+    def _detect_clock_skew(self, connection):
+        out, err = self._execute_command(connection, 'sudo ceph health')
+
+        try:
+            self._get_eof(out, 'sudo ceph health')
+        except TimeoutError:
+            raise TimeoutError('sudo ceph health timed out')
+
+        status = out.read().split(' ', 1)
+
+        if not (len(status) == 2 and status[0].strip() in self.BAD_HEALTH):
+            return None
+
+        if re.search(r'clock skew detected on.*', status[1]) is None:
+            return None
+
+        skew_list = [i.strip()[4:] for i in
+                     re.findall(r'(mon\..*)[;]', status[1])[0].split(',')]
+        return skew_list
 
     def _inject_mon_map(self, monmap_loc, machine_list):
         for machine in machine_list:
