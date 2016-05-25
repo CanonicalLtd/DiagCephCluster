@@ -16,16 +16,8 @@ class MonObject(object):
         self.admin_socket = admin_socket
         self.connection = connection
         self.ssh_status = ssh_status
-        self.mon_id = self.get_id(admin_socket)
+        self.mon_id = None if admin_socket is None else admin_socket[9:-5]
         self.is_monmap_correct = False
-
-    def get_id(self, admin_socket):
-        if admin_socket is None:
-            return None
-
-        mon_id = admin_socket[9:]
-        mon_id = mon_id[:-5]
-        return mon_id
 
 
 class TroubleshootCeph(object):
@@ -146,6 +138,8 @@ class TroubleshootCephMon(TroubleshootCeph):
             Based on ceph mon quorum status  troubleshoot using either
             ceph cli or ceph mon admin sockets
         '''
+        # Let's store all the machines for future use
+        self.machines = self._get_machine_objects()
 
         if self.is_ceph_cli:
             self._troubleshoot_mon_cli()
@@ -158,9 +152,6 @@ class TroubleshootCephMon(TroubleshootCeph):
             Troubleshoot mon issues using monitor sockets when ceph cli
             doesnt work i.e. quorum is not being established
         '''
-        # Lets store all the machine list by parsing the /etc/ceph.conf
-        self.machines = self._get_machine_objects()
-
         # Starting checklist when ceph cli is down
         # first we restart all machines as don't have many options here
 
@@ -221,10 +212,6 @@ class TroubleshootCephMon(TroubleshootCeph):
 
     def _troubleshoot_mon_common(self):
         ''' Common checklist for both when ceph cli is working or not '''
-
-        # Lets store all the machine list for future use
-        self.machines = self._get_machine_objects()
-
         print 'Trying to detect for Clock Skew'
         status = None
         try:
