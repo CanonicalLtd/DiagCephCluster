@@ -118,7 +118,7 @@ class TroubleshootCeph(object):
         if status == 'HEALTH_OK':
             print 'Ceph cluster working again'
             exit()
-        elif status == 'HEALTH_WARN':
+        else:
             print "Didn't work, trying deeper probe"
 
     @classmethod
@@ -153,7 +153,10 @@ class TroubleshootCephMon(TroubleshootCeph):
             doesnt work i.e. quorum is not being established
         '''
         # Starting checklist when ceph cli is down
-        # first we restart all machines as don't have many options here
+        # First let's call the common check list
+        self._troubleshoot_mon_common()
+
+        # Didnt work try restart all mon machines
 
         print '\nProbable cause Ceph mon service not running in some machines'
         print 'Try & start the mon service in every machine',
@@ -164,19 +167,15 @@ class TroubleshootCephMon(TroubleshootCeph):
             print 'not proceeding with starting machines, aborting'
             return
 
-        self._restart_all_machines()
+        self._restart_all_mon_daemons()
 
         time.sleep(10)
         try:
             self.check_ceph_cli_health(self.connection)
         except TimeoutError:
             print "Restarting servers not in quorum didn't work,"
-            print 'trying deeper probe'
 
-        # Now let's call the common check list
-        self._troubleshoot_mon_common()
-
-    def _restart_all_machines(self):
+    def _restart_all_mon_daemons(self):
         for machine in self.machines:
             if machine.ssh_status == 'LIVE':
                 self._restart_ceph_mon_service('start', machine.host)
