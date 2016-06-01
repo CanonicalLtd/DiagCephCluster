@@ -73,6 +73,7 @@ class TroubleshootCeph(object):
                           choices=['ssh', 'juju'],
                           help='currently supports ssh')
         parser.add_option('-k', '--ssh_key', dest='ssh_key', default=None)
+        parser.add_option('-t', '--timeout', dest='timeout', default=30)
         return parser
 
     @classmethod
@@ -122,11 +123,27 @@ class TroubleshootCeph(object):
             print "Didn't work, trying deeper probe"
 
     @classmethod
-    @timeout(20)
+    @timeout(10)
     def _get_eof(cls, stream, command):
         while not stream.channel.eof_received:
             pass
         return stream.channel.eof_received
+
+    @classmethod
+    def poll_ceph_status(cls, connection, command='sudo ceph health'):
+        tries = cls.options.timeout / 10
+        status = None
+        for i in range(tries):
+            (out, err) = cls._execute_command(connection, command)
+            try:
+                cls._get_eof(out, command)
+            except TimeoutError:
+                print 'retrying status'
+            else:
+                status = out.read().split(' ')[0].strip()
+                if status == 'HEALTH_OK':
+                    return status
+        return status
 
 
 class TroubleshootCephMon(TroubleshootCeph):
@@ -169,11 +186,11 @@ class TroubleshootCephMon(TroubleshootCeph):
 
         self._restart_all_mon_daemons()
 
-        time.sleep(10)
-        try:
-            self.check_ceph_cli_health(self.connection)
-        except TimeoutError:
-            print "Restarting servers not in quorum didn't work,"
+        if self.poll_ceph_status(self.connection) == 'HEALTH_OK':
+            print 'Ceph Cluster working again :-)'
+            exit()
+        else:
+            print "Restarting all mon servers didn't work,"
 
     def _restart_all_mon_daemons(self):
         for machine in self.machines:
@@ -198,13 +215,12 @@ class TroubleshootCephMon(TroubleshootCeph):
         # Start ceph cli check_list
         self._restart_dead_mon_daemons()
 
-        # Let's wait for sometime before getting ceph health status
-        time.sleep(10)
-        try:
-            self.check_ceph_cli_health(self.connection)
-        except TimeoutError:
+        if self.poll_ceph_status(self.connection) == 'HEALTH_OK':
+            print 'Ceph Cluster working again :-)'
+            exit()
+        else:
             print "Restarting servers not in quorum didn't work,"
-            print 'trying deeper probe'
+            print 'Trying deeper probe'
 
         # Now let's call the common checklist
         self._troubleshoot_mon_common()
@@ -232,12 +248,11 @@ class TroubleshootCephMon(TroubleshootCeph):
             else:
                 self._correct_skew(status)
 
-        # Let's wait for sometime before getting ceph health status
-        time.sleep(10)
-        try:
-            self.check_ceph_cli_health(self.connection)
-        except TimeoutError:
-            print "Restarting ntpd did not work, probing deeper"
+        if self.poll_ceph_status(self.connection) == 'HEALTH_OK':
+            print 'Ceph Cluster working again :-)'
+            exit()
+        else:
+            print "Restarting ntpd didn't work, probing deeper"
 
         print 'Inject correct monmap to machines with incorrect monmap?'
         print '(yes/no) (default no)?',
@@ -254,12 +269,11 @@ class TroubleshootCephMon(TroubleshootCeph):
 
         self._inject_mon_map(monmap_loc, self.machines)
 
-        # Let's wait for sometime before getting ceph health status
-        time.sleep(10)
-        try:
-            self.check_ceph_cli_health(self.connection)
-        except TimeoutError:
-            print "Injecting Monmap didn't work, probably network issue"
+        if self.poll_ceph_status(self.connection) == 'HEALTH_OK':
+            print 'Ceph Cluster working again :-)'
+            exit()
+        else:
+            print "Injecting Monmap didn't work, probably Network issue"
 
     def _correct_skew(self, skew_list):
         for mon in skew_list:
