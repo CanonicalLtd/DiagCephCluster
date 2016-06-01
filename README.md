@@ -29,5 +29,6 @@ python run.py -H host_ip -u username -k /home/penguinRaider/id_rsa
     -p password, --pass password                                        password of the user(optional) 
     -P (juju, ssh)  --provider (juju, ssh)                              the provider to use(juju doesnt require most of the above parameters, currently only supports ssh) 
     -k ssh_key_location --ssh_key ssh_key_location                      the address in the filesystem where the private key is located
+    -t timeout --timeout timeout                                        the time for which to poll for status for the ceph health command(default=30)
 ## License
 MIT Licensed
