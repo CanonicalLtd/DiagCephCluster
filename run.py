@@ -1,4 +1,5 @@
 from ConfigParser import ConfigParser
+import json
 import optparse
 import os
 import paramiko
@@ -18,6 +19,18 @@ class MonObject(object):
         self.ssh_status = ssh_status
         self.mon_id = None if admin_socket is None else admin_socket[9:-5]
         self.is_monmap_correct = False
+
+
+class OsdObject(object):
+    def __init__(self, host, name, id, ssh_status, status, in_cluster,
+                 connection=None):
+        self.name = name
+        self.id = id
+        self.host = host
+        self.ssh_status = ssh_status
+        self.connection = connection
+        self.status = status
+        self.in_cluster = in_cluster
 
 
 class TroubleshootCeph(object):
@@ -441,14 +454,65 @@ class TroubleshootCephMon(TroubleshootCeph):
         print addr + ': ' + cmd + ' successful'
 
 
+class TroubleshootCephOsd(TroubleshootCeph):
+    def troubleshoot_osd(self):
+        self.osd_objects = self._get_all_osd_object()
+
+    def _get_all_osd_object(self):
+        osd_objects = []
+        osd_list = self._get_osd_list()
+        out, err = self._execute_command(self.connection,
+                                         'sudo ceph osd tree --format=json')
+        osd_tree = json.loads(out.read())
+
+        for node in osd_tree['nodes']:
+            if node['name'] in osd_list:
+                status = node['status']
+                in_cluster = 'out' if node['reweight'] == 0.0 else 'in'
+                host = self._get_osd_details(node['id'])
+
+                try:
+                    connection = self._get_connection(host)
+                except ConnectionFailedError as err:
+                    osd_obj = OsdObject(host, node['name'], node['id'], False,
+                                        status, in_cluster)
+                else:
+                    osd_obj = OsdObject(host, node['name'], node['id'], True,
+                                        status, in_cluster, connection)
+
+                    osd_objects.append(osd_obj)
+
+        return osd_objects
+
+    def _get_osd_details(self, osd_id):
+        cmd = 'sudo ceph osd find ' + str(osd_id) + ' --format json'
+        out, err = self._execute_command(self.connection, cmd)
+        details = json.loads(out.read())
+        return details['crush_location']['host']
+
+    def _get_osd_list(self):
+        out, err = self._execute_command(self.connection, 'sudo ceph osd ls')
+        return map(lambda x: 'osd.' + str(x), filter(lambda x: x is not '',
+                                                     out.read().split('\n')))
+
 if __name__ == "__main__":
     TroubleshootCeph = TroubleshootCeph()
     cluster_status = TroubleshootCeph.start_troubleshoot()
     if cluster_status == 'HEALTH_OK':
         print 'All good up here :-)'
-        exit()
     elif cluster_status is None:
         TroubleshootCephMon = TroubleshootCephMon(is_ceph_cli=False)
+        TroubleshootCephMon.troubleshoot_mon()
     else:
         TroubleshootCephMon = TroubleshootCephMon(is_ceph_cli=True)
-    TroubleshootCephMon.troubleshoot_mon()
+        TroubleshootCephMon.troubleshoot_mon()
+
+    # If the script reaches here we check for osd issues
+    # First lets check if the ceph cli is working
+    cluster_status = TroubleshootCeph.start_troubleshoot()
+    if cluster_status is None:
+        msg = 'ceph cli could not work, can not proceed'
+        raise QuorumIssueNotResolvedError(msg)
+
+    TroubleshootCephOsd = TroubleshootCephOsd()
+    TroubleshootCephOsd.troubleshoot_osd()
