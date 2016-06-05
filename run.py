@@ -41,6 +41,8 @@ class TroubleshootCeph(object):
     BAD_HEALTH = ['HEALTH_WARN']
     init_script = './scripts/check_init.sh'
     init_type = ''
+    arch_script = './scripts/find_processor_architecture.sh'
+    arch_type = ''
 
     def __init__(self):
         self.parser = self._get_opt_parser()
@@ -66,8 +68,15 @@ class TroubleshootCeph(object):
         if cls.init_type == 'none':
             raise InitSystemNotSupportedError()
 
+        cls.arch_type = self._get_arch_type(cls.connection).strip()
+
     def _get_init_type(self, connection):
         cmd = open(self.init_script, 'r').read()
+        out, err = self._execute_command(connection, cmd)
+        return out.read()
+
+    def _get_arch_type(self, connection):
+        cmd = open(self.arch_script, 'r').read()
         out, err = self._execute_command(connection, cmd)
         return out.read()
 
@@ -456,7 +465,37 @@ class TroubleshootCephMon(TroubleshootCeph):
 
 class TroubleshootCephOsd(TroubleshootCeph):
     def troubleshoot_osd(self):
+        status = self._poll_osd_status(self.connection)
+        print status
+        if status == 'OSD_FULL':
+            print 'OSD objects almost full'
+            return
+        elif status == 'OSD_OK':
+            print 'No OSD Issues :-)'
+            return
+        elif status is None:
+            print 'ceph cli down can not proceed'
+            return
+
         self.osd_objects = self._get_all_osd_object()
+
+        # Let's try restarting osd daemons that are down
+        print 'trying to restart osd daemon that are down'
+        self._restart_dead_osd()
+
+    def _restart_dead_osd(self):
+        for osd in self.osd_objects:
+            if osd.ssh_status and osd.status == 'down':
+                self._restart_osd(osd)
+
+    def _restart_osd(self, osd, cmd='start'):
+        if self.init_type in ['upstart', 'sysv-init']:
+            cmd = 'sudo ' + cmd + ' ceph-osd id=' + str(osd.id)
+        else:
+            cmd = 'sudo systemctl ' + cmd + ' ceph-osd@' + str(osd.id) +\
+                '.service'
+        out, err = self._execute_command(osd.connection, cmd)
+        print osd.name + ': ' + cmd + ' successful'
 
     def _get_all_osd_object(self):
         osd_objects = []
@@ -495,11 +534,33 @@ class TroubleshootCephOsd(TroubleshootCeph):
         return map(lambda x: 'osd.' + str(x), filter(lambda x: x is not '',
                                                      out.read().split('\n')))
 
+    def _poll_osd_status(self, connection):
+        tries = self.options.timeout / 10
+        status = None
+        cmd = 'sudo ceph osd stat --format json'
+        for i in range(tries):
+            (out, err) = self._execute_command(connection, cmd)
+            try:
+                self._get_eof(out, cmd)
+            except TimeoutError:
+                print 'retrying status'
+            else:
+                status = json.loads(out.read())
+                if status['full'] or status['nearfull']:
+                    return 'OSD_FULL'
+                elif (status['num_osds'] == status['num_up_osds'] and
+                      status['num_up_osds'] == status['num_in_osds']):
+                    return 'OSD_OK'
+                else:
+                    return 'OSD_NOT_OK'
+        return status
+
+
 if __name__ == "__main__":
     TroubleshootCeph = TroubleshootCeph()
     cluster_status = TroubleshootCeph.start_troubleshoot()
     if cluster_status == 'HEALTH_OK':
-        print 'All good up here :-)'
+        print 'All good with monitors up here :-)'
     elif cluster_status is None:
         TroubleshootCephMon = TroubleshootCephMon(is_ceph_cli=False)
         TroubleshootCephMon.troubleshoot_mon()
