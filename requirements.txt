@@ -1,4 +1,1 @@
 paramiko
-pycodestyle
-unittest2
-nose
