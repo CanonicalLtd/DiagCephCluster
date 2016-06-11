@@ -1,2 +1,4 @@
 paramiko
-pep8
+pycodestyle
+unittest2
+nose
