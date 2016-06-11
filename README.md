@@ -1,5 +1,6 @@
 # Diagnose My Ceph Cluster
 
+[![Build Status](https://travis-ci.org/hellboy2k8/DiagCephCluster.svg?branch=master)](https://travis-ci.org/hellboy2k8/DiagCephCluster)
 
 Code base for for Diagnose my ceph cluster script
 
