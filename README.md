@@ -7,7 +7,7 @@ Code base for for Diagnose my ceph cluster script
 
 ## Installation
  
-See INSTALLATION
+See INSTALLATION.md
 
 
 ## Usage
