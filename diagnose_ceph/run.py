@@ -39,9 +39,10 @@ class TroubleshootCeph(object):
     '''
     GOOD_HEALTH = ['HEALTH_OK']
     BAD_HEALTH = ['HEALTH_WARN']
-    init_script = './scripts/check_init.sh'
+    CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
+    init_script = CURRENT_DIR + '/scripts/check_init.sh'
     init_type = ''
-    arch_script = './scripts/find_processor_architecture.sh'
+    arch_script = CURRENT_DIR + '/scripts/find_processor_architecture.sh'
     arch_type = ''
 
     def __init__(self):
@@ -556,24 +557,24 @@ class TroubleshootCephOsd(TroubleshootCeph):
         return status
 
 
-if __name__ == "__main__":
-    TroubleshootCeph = TroubleshootCeph()
-    cluster_status = TroubleshootCeph.start_troubleshoot()
+def run():
+    TroubleshootCeph_ = TroubleshootCeph()
+    cluster_status = TroubleshootCeph_.start_troubleshoot()
     if cluster_status == 'HEALTH_OK':
         print 'All good with monitors up here :-)'
     elif cluster_status is None:
-        TroubleshootCephMon = TroubleshootCephMon(is_ceph_cli=False)
-        TroubleshootCephMon.troubleshoot_mon()
+        TroubleshootCephMon_ = TroubleshootCephMon(is_ceph_cli=False)
+        TroubleshootCephMon_.troubleshoot_mon()
     else:
-        TroubleshootCephMon = TroubleshootCephMon(is_ceph_cli=True)
-        TroubleshootCephMon.troubleshoot_mon()
+        TroubleshootCephMon_ = TroubleshootCephMon(is_ceph_cli=True)
+        TroubleshootCephMon_.troubleshoot_mon()
 
     # If the script reaches here we check for osd issues
     # First lets check if the ceph cli is working
-    cluster_status = TroubleshootCeph.start_troubleshoot()
+    cluster_status = TroubleshootCeph_.start_troubleshoot()
     if cluster_status is None:
         msg = 'ceph cli could not work, can not proceed'
         raise QuorumIssueNotResolvedError(msg)
 
-    TroubleshootCephOsd = TroubleshootCephOsd()
-    TroubleshootCephOsd.troubleshoot_osd()
+    TroubleshootCephOsd_ = TroubleshootCephOsd()
+    TroubleshootCephOsd_.troubleshoot_osd()

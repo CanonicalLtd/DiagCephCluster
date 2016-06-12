@@ -1,7 +1,7 @@
 from functools import wraps, partial
 import signal
 
-from helpers.exceptions import TimeoutError
+from exceptions import TimeoutError
 
 
 def timeout(seconds=20):

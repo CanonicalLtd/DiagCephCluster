@@ -3,3 +3,6 @@
 *.swo
 *.swn
 *.swm
+dist
+build
+diagnose_ceph.egg*
