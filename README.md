@@ -4,6 +4,12 @@
 
 Code base for for Diagnose my ceph cluster script
 
+
+## Installation
+ 
+See INSTALLATION
+
+
 ## Usage
 
 To run do the following:
@@ -11,15 +17,14 @@ To run do the following:
 We can use username + password to authenticate:
 
 ```bash
-python run.py -H host_ip -u username -p password
+diagnose_ceph -H host_ip -u username -p password
 ```
 
 The other way is to use private key to authenticate:
 
 ```bash
-python run.py -H host_ip -u username -k /home/penguinRaider/id_rsa
+diagnose_ceph -H host_ip -u username -k /home/penguinRaider/id_rsa
 ```
-
 
 **The following options are provided by the command line parser -**
 
