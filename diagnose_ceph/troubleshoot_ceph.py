@@ -1,3 +1,4 @@
+import json
 import optparse
 import os
 import paramiko
@@ -5,8 +6,21 @@ import re
 import subprocess
 
 from helpers.exceptions import (SSHCredsNotFoundError, ConnectionFailedError,
-                                TimeoutError, InitSystemNotSupportedError)
+                                TimeoutError, InitSystemNotSupportedError,
+                                JujuInstallationNotFoundError)
 from helpers.decorators import timeout
+
+
+class JujuCephMachine(object):
+    def __init__(self, name, id, public_addr, hostname, private_addr=None,
+                 has_osd=False, has_mon=False):
+        self.name = name
+        self.id = id
+        self.public_addr = public_addr
+        self.hostname = hostname
+        self.private_addr = private_addr
+        self.has_osd = has_osd
+        self.has_mon = has_mon
 
 
 class TroubleshootCeph(object):
@@ -25,16 +39,19 @@ class TroubleshootCeph(object):
         self.parser = self._get_opt_parser()
         cls = TroubleshootCeph
         cls.options, cls.arguments = self.parser.parse_args()
-        cls.juju_version = self._find_juju_version()
 
         if cls.options.provider == 'juju':
-            raise NotImplementedError('#TODO Feature')
-
-        if (not (cls.options.host and cls.options.user) and
-            not (cls.options.host and cls.options.ssh_key and
-                 cls.options.user)):
+            cls.juju_version = self._find_juju_version()
+        elif (not (cls.options.host and cls.options.user) and
+              not (cls.options.host and cls.options.ssh_key and
+                   cls.options.user)):
             msg = 'Credentials insufficient, see help'
             raise SSHCredsNotFoundError(msg)
+
+        if cls.juju_version is None:
+            raise JujuInstallationNotFoundError('juju not found locally')
+        else:
+            cls.juju_ceph_machines = self._get_all_juju_ceph_machines()
 
         try:
             cls.connection = cls._get_connection(cls.options.host)
@@ -48,14 +65,47 @@ class TroubleshootCeph(object):
 
         cls.arch_type = self._get_arch_type(cls.connection).strip()
 
+    def _get_all_machine_param(self, machine):
+        id = machine['machine']
+        public_addr = machine['public-address']
+        cmd = 'juju1 run --machine ' + str(id) + ' "cat /etc/hostname"'
+        proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+        hostname = proc.communicate()[0].strip('\n')
+        return id, public_addr, hostname
+
+    def _get_all_juju_ceph_machines(self):
+        proc = subprocess.Popen('juju1 status --format json', shell=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        machine_list = json.loads(proc.communicate()[0])
+        juju_machines = []
+        for name, val in machine_list['services']['ceph']['units'].iteritems():
+            jujuname = name
+            id, public_addr, hostname = self._get_all_machine_param(val)
+            machine = JujuCephMachine(jujuname, id, public_addr, hostname,
+                                      has_mon=True)
+            juju_machines.append(machine)
+            print 'Found - ', hostname, '-', jujuname, '-', public_addr
+
+        ceph_osd = machine_list['services']['ceph-osd']['units']
+        for name, val in ceph_osd.iteritems():
+                jujuname = name
+                id, public_addr, hostname = self._get_all_machine_param(val)
+                machine = JujuCephMachine(jujuname, id, public_addr, hostname,
+                                          has_osd=True)
+                juju_machines.append(machine)
+                print 'Found - ', hostname, '-', jujuname, '-', public_addr
+        return juju_machines
+
     def _find_juju_version(self):
-        proc = subprocess.Popen('juju --version', shell=True,
-                                stdout=subprocess.PIPE)
+        proc = subprocess.Popen('juju1 --version', shell=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout = proc.communicate()[0].strip('\n')
         if re.search(r'^2.*', stdout) is not None:
             return 'juju2'
-        else:
+        elif re.search(r'^1.*', stdout) is not None:
             return 'juju1'
+        return None
 
     def _get_init_type(self, connection):
         cmd = open(self.init_script, 'r').read()

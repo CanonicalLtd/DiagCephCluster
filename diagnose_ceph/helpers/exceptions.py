@@ -21,3 +21,8 @@ class InitSystemNotSupportedError(Exception):
 class QuorumIssueNotResolvedError(Exception):
     def __init__(self, message):
         super(QuorumIssueNotResolvedError, self).__init__(message)
+
+
+class JujuInstallationNotFoundError(Exception):
+    def __init__(self, message):
+        super(JujuInstallationNotFoundError, self).__init__(message)
