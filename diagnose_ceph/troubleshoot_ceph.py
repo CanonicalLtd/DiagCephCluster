@@ -1,6 +1,8 @@
 import optparse
 import os
 import paramiko
+import re
+import subprocess
 
 from helpers.exceptions import (SSHCredsNotFoundError, ConnectionFailedError,
                                 TimeoutError, InitSystemNotSupportedError)
@@ -23,6 +25,7 @@ class TroubleshootCeph(object):
         self.parser = self._get_opt_parser()
         cls = TroubleshootCeph
         cls.options, cls.arguments = self.parser.parse_args()
+        cls.juju_version = self._find_juju_version()
 
         if cls.options.provider == 'juju':
             raise NotImplementedError('#TODO Feature')
@@ -44,6 +47,15 @@ class TroubleshootCeph(object):
             raise InitSystemNotSupportedError()
 
         cls.arch_type = self._get_arch_type(cls.connection).strip()
+
+    def _find_juju_version(self):
+        proc = subprocess.Popen('juju --version', shell=True,
+                                stdout=subprocess.PIPE)
+        stdout = proc.communicate()[0].strip('\n')
+        if re.search(r'^2.*', stdout) is not None:
+            return 'juju2'
+        else:
+            return 'juju1'
 
     def _get_init_type(self, connection):
         cmd = open(self.init_script, 'r').read()
