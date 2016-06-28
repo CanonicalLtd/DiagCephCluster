@@ -1,4 +1,3 @@
-import __builtin__
 import json
 import optparse
 import os
@@ -11,14 +10,7 @@ from helpers.exceptions import (SSHCredsNotFoundError, ConnectionFailedError,
                                 TimeoutError, InitSystemNotSupportedError,
                                 JujuInstallationNotFoundError)
 from helpers.decorators import timeout
-
-
-class MyStr(str):
-    def read(self):
-        return self
-
-
-__builtin__.str = MyStr
+from helpers.helpers import MyStr
 
 
 class JujuCephMachine(object):
@@ -133,12 +125,12 @@ class TroubleshootCeph(object):
     def _get_init_type(self, connection=None, juju=False):
         cmd = open(self.init_script, 'r').read()
         out, err = self._execute_command(connection, cmd, juju)
-        return str(out).read()
+        return MyStr(out).read()
 
     def _get_arch_type(self, connection=None, juju=False):
         cmd = open(self.arch_script, 'r').read()
         out, err = self._execute_command(connection, cmd, juju)
-        return str(out).read()
+        return MyStr(out).read()
 
     def _get_opt_parser(self):
         desc = ('Command line parser for CephDiagnoseTool \n'
@@ -194,7 +186,7 @@ class TroubleshootCeph(object):
                                              is_juju=cls.is_juju)
         try:
             cls._get_eof(output, command)
-            cluster_status = str(output).read().split(' ')[0].strip()
+            cluster_status = MyStr(output).read().split(' ')[0].strip()
         except TimeoutError as err:
             # ceph cli is not working i.e. quorum is not being established
             # hence we need to use ceph admin sockets
@@ -206,7 +198,7 @@ class TroubleshootCeph(object):
     def check_ceph_cli_health(cls, connection, command='sudo ceph health'):
         (output, err) = cls._execute_command(connection, command,
                                              is_juju=cls.is_juju)
-        status = str(output).read().split(' ')[0].strip()
+        status = MyStr(output).read().split(' ')[0].strip()
 
         if status == 'HEALTH_OK':
             print 'Ceph cluster working again'
@@ -235,7 +227,7 @@ class TroubleshootCeph(object):
             except TimeoutError:
                 print 'retrying status'
             else:
-                status = str(out).read().split(' ')[0].strip()
+                status = MyStr(out).read().split(' ')[0].strip()
                 if status == 'HEALTH_OK':
                     return status
         return status
