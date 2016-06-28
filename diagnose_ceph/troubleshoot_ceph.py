@@ -172,16 +172,6 @@ class TroubleshootCeph(object):
         return client
 
     @classmethod
-    def _execute_juju_command(cls, machine_id, command):
-        from base64 import b64encode
-        command = '`echo ' + b64encode(command) + ' | base64 --decode`'
-        cmd = 'juju1 run --machine ' + str(machine_id) + ' "' + command + '"'
-        out = subprocess.Popen(cmd, shell=True,
-                               stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE)
-        return out.communicate()
-
-    @classmethod
     def _execute_command(cls, connection, command, is_juju=False):
         if is_juju is True:
             from base64 import b64encode
@@ -238,8 +228,8 @@ class TroubleshootCeph(object):
         tries = cls.options.timeout / 10
         status = None
         for i in range(tries):
-            (out, err) = cls._execute_juju_command(connection, command,
-                                                   is_juju=cls.is_juju)
+            (out, err) = cls._execute_command(connection, command,
+                                              is_juju=cls.is_juju)
             try:
                 cls._get_eof(out, command)
             except TimeoutError:
