@@ -1,14 +1,24 @@
+import __builtin__
 import json
 import optparse
 import os
 import paramiko
 import re
 import subprocess
+import sys
 
 from helpers.exceptions import (SSHCredsNotFoundError, ConnectionFailedError,
                                 TimeoutError, InitSystemNotSupportedError,
                                 JujuInstallationNotFoundError)
 from helpers.decorators import timeout
+
+
+class MyStr(str):
+    def read(self):
+        return self
+
+
+__builtin__.str = MyStr
 
 
 class JujuCephMachine(object):
@@ -52,18 +62,23 @@ class TroubleshootCeph(object):
             raise JujuInstallationNotFoundError('juju not found locally')
         else:
             cls.juju_ceph_machines = self._get_all_juju_ceph_machines()
+        if cls.options.provider == 'ssh':
+            cls.is_juju = False
+            try:
+                cls.connection = cls._get_connection(cls.options.host)
+            except Exception as err:
+                print err
+                raise ConnectionFailedError('Couldnot connect to host')
+        else:
+            cls.is_juju = True
 
-        try:
-            cls.connection = cls._get_connection(cls.options.host)
-        except Exception as err:
-            print err
-            raise ConnectionFailedError('Couldnot connect to host')
-
-        cls.init_type = self._get_init_type(cls.connection).strip()
+        cls.init_type = self._get_init_type(cls.connection,
+                                            cls.is_juju).strip()
         if cls.init_type == 'none':
             raise InitSystemNotSupportedError()
 
-        cls.arch_type = self._get_arch_type(cls.connection).strip()
+        cls.arch_type = self._get_arch_type(cls.connection,
+                                            cls.is_juju).strip()
 
     def _get_all_machine_param(self, machine):
         id = machine['machine']
@@ -75,6 +90,10 @@ class TroubleshootCeph(object):
         return id, public_addr, hostname
 
     def _get_all_juju_ceph_machines(self):
+        cls = TroubleshootCeph
+        leader_id = sys.maxint
+        cls.connection = None
+
         proc = subprocess.Popen('juju1 status --format json', shell=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         machine_list = json.loads(proc.communicate()[0])
@@ -84,6 +103,10 @@ class TroubleshootCeph(object):
             id, public_addr, hostname = self._get_all_machine_param(val)
             machine = JujuCephMachine(jujuname, id, public_addr, hostname,
                                       has_mon=True)
+
+            if int(id) < leader_id:
+                leader_id, cls.connection = int(id), machine
+
             juju_machines.append(machine)
             print 'Found - ', hostname, '-', jujuname, '-', public_addr
 
@@ -107,15 +130,15 @@ class TroubleshootCeph(object):
             return 'juju1'
         return None
 
-    def _get_init_type(self, connection):
+    def _get_init_type(self, connection=None, juju=False):
         cmd = open(self.init_script, 'r').read()
-        out, err = self._execute_command(connection, cmd)
-        return out.read()
+        out, err = self._execute_command(connection, cmd, juju)
+        return str(out).read()
 
-    def _get_arch_type(self, connection):
+    def _get_arch_type(self, connection=None, juju=False):
         cmd = open(self.arch_script, 'r').read()
-        out, err = self._execute_command(connection, cmd)
-        return out.read()
+        out, err = self._execute_command(connection, cmd, juju)
+        return str(out).read()
 
     def _get_opt_parser(self):
         desc = ('Command line parser for CephDiagnoseTool \n'
@@ -149,31 +172,51 @@ class TroubleshootCeph(object):
         return client
 
     @classmethod
-    def _execute_command(cls, connection, command):
-        (stdin, stdout, stderr) = connection.exec_command(command)
-        return (stdout, stderr)
+    def _execute_juju_command(cls, machine_id, command):
+        from base64 import b64encode
+        command = '`echo ' + b64encode(command) + ' | base64 --decode`'
+        cmd = 'juju1 run --machine ' + str(machine_id) + ' "' + command + '"'
+        out = subprocess.Popen(cmd, shell=True,
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE)
+        return out.communicate()
+
+    @classmethod
+    def _execute_command(cls, connection, command, is_juju=False):
+        if is_juju is True:
+            from base64 import b64encode
+            command = '`echo ' + b64encode(command) + ' | base64 --decode`'
+            cmd = 'juju1 run --machine ' + str(connection.id) + ' "' + command
+            cmd += '"'
+            out = subprocess.Popen(cmd, shell=True,
+                                   stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+            return out.communicate()
+        else:
+            (stdin, stdout, stderr) = connection.exec_command(command)
+            return (stdout, stderr)
 
     def start_troubleshoot(self):
         cls = TroubleshootCeph
         command = 'sudo ceph health'
-        (output, err) = cls._execute_command(cls.connection, command)
         cluster_status = None
-
+        (output, err) = cls._execute_command(cls.connection, command,
+                                             is_juju=cls.is_juju)
         try:
             cls._get_eof(output, command)
-            cluster_status = output.read().split(' ')[0].strip()
+            cluster_status = str(output).read().split(' ')[0].strip()
         except TimeoutError as err:
             # ceph cli is not working i.e. quorum is not being established
             # hence we need to use ceph admin sockets
             return None
-
         return cluster_status
 
     @classmethod
     @timeout(10)
     def check_ceph_cli_health(cls, connection, command='sudo ceph health'):
-        (output, err) = cls._execute_command(connection, 'sudo ceph health')
-        status = output.read().split(' ')[0].strip()
+        (output, err) = cls._execute_command(connection, command,
+                                             is_juju=cls.is_juju)
+        status = str(output).read().split(' ')[0].strip()
 
         if status == 'HEALTH_OK':
             print 'Ceph cluster working again'
@@ -184,6 +227,8 @@ class TroubleshootCeph(object):
     @classmethod
     @timeout(10)
     def _get_eof(cls, stream, command):
+        if isinstance(stream, basestring):
+            return
         while not stream.channel.eof_received:
             pass
         return stream.channel.eof_received
@@ -193,13 +238,14 @@ class TroubleshootCeph(object):
         tries = cls.options.timeout / 10
         status = None
         for i in range(tries):
-            (out, err) = cls._execute_command(connection, command)
+            (out, err) = cls._execute_juju_command(connection, command,
+                                                   is_juju=cls.is_juju)
             try:
                 cls._get_eof(out, command)
             except TimeoutError:
                 print 'retrying status'
             else:
-                status = out.read().split(' ')[0].strip()
+                status = str(out).read().split(' ')[0].strip()
                 if status == 'HEALTH_OK':
                     return status
         return status
