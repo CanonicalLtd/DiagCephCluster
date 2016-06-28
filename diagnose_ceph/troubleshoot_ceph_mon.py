@@ -7,13 +7,25 @@ from troubleshoot_ceph import TroubleshootCeph
 
 
 class MonObject(object):
-    def __init__(self, host, ssh_status, connection=None, admin_socket=None):
+    def __init__(self, host, ssh_status, connection=None, admin_socket=None,
+                 **kwargs):
         self.host = host
         self.admin_socket = admin_socket
         self.connection = connection
         self.ssh_status = ssh_status
         self.mon_id = None if admin_socket is None else admin_socket[9:-5]
         self.is_monmap_correct = False
+        if 'hostname' in kwargs:
+            self.mon_id = kwargs['hostname']
+        for key, value in kwargs.iteritems():
+            self.key = value
+
+    @classmethod
+    def juju_machine(cls, public_addr, admin_socket, hostname, juju_name,
+                     juju_id):
+        return cls(host=public_addr, ssh_status='LIVE', connection=None,
+                   admin_socket=admin_socket, juju_id=juju_id,
+                   juju_name=juju_name, hostname=hostname)
 
 
 class TroubleshootCephMon(TroubleshootCeph):
@@ -26,7 +38,10 @@ class TroubleshootCephMon(TroubleshootCeph):
             ceph cli or ceph mon admin sockets
         '''
         # Let's store all the machines for future use
-        self.machines = self._get_machine_objects()
+        if self.is_juju is True:
+            self.machines = self._get_juju_machine_objects()
+        else:
+            self.machines = self._get_machine_objects()
 
         if self.is_ceph_cli:
             self._troubleshoot_mon_cli()
@@ -246,6 +261,19 @@ class TroubleshootCephMon(TroubleshootCeph):
             raise TimeoutError('ceph mon getmap timed out')
         mon_host.connection.open_sftp().get('/tmp/monmap', loc)
         self._restart_ceph_mon_service('start', mon_host.host)
+
+    def _get_juju_machine_objects(self):
+        # Here we assume all ceph/* have a mon service
+        machines = []
+        for machine in self.juju_ceph_machines:
+            if machine.has_mon is True:
+                out, err = self._execute_command(machine, 'ls /var/run/ceph',
+                                                 is_juju=True)
+                socket = self._find_mon_socket(str(out).read().split('\n'))
+                machine = MonObject.juju_machine(machine.public_addr, socket,
+                                                 machine.hostname, machine.id,
+                                                 machine.name)
+                machines.append(machine)
 
     def _get_machine_objects(self):
         mon_list = self._get_mon_list()

@@ -22,13 +22,12 @@ __builtin__.str = MyStr
 
 
 class JujuCephMachine(object):
-    def __init__(self, name, id, public_addr, hostname, private_addr=None,
-                 has_osd=False, has_mon=False):
+    def __init__(self, name, id, public_addr, hostname, has_osd=False,
+                 has_mon=False):
         self.name = name
         self.id = id
         self.public_addr = public_addr
         self.hostname = hostname
-        self.private_addr = private_addr
         self.has_osd = has_osd
         self.has_mon = has_mon
 
