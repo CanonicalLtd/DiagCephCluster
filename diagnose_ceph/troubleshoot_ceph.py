@@ -48,7 +48,7 @@ class TroubleshootCeph(object):
         self.parser = self._get_opt_parser()
         cls = TroubleshootCeph
         cls.options, cls.arguments = self.parser.parse_args()
-
+        cls.juju_version = None
         if cls.options.provider == 'juju':
             cls.juju_version = self._find_juju_version()
         elif (not (cls.options.host and cls.options.user) and
@@ -57,10 +57,11 @@ class TroubleshootCeph(object):
             msg = 'Credentials insufficient, see help'
             raise SSHCredsNotFoundError(msg)
 
-        if cls.juju_version is None:
-            raise JujuInstallationNotFoundError('juju not found locally')
-        else:
+        if cls.juju_version is 'not_supported':
+            raise JujuInstallationNotFoundError('juju not found/not supported')
+        elif cls.juju_version == 'juju1' or cls.juju_version == 'juju2':
             cls.juju_ceph_machines = self._get_all_juju_ceph_machines()
+
         if cls.options.provider == 'ssh':
             cls.is_juju = False
             try:
@@ -127,7 +128,7 @@ class TroubleshootCeph(object):
             return 'juju2'
         elif re.search(r'^1.*', stdout) is not None:
             return 'juju1'
-        return None
+        return 'not_supported'
 
     def _get_init_type(self, connection=None, juju=False):
         cmd = open(self.init_script, 'r').read()
