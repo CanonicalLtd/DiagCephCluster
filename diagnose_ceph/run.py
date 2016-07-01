@@ -10,9 +10,11 @@ def run():
     if cluster_status == 'HEALTH_OK':
         print 'All good with monitors up here :-)'
     elif cluster_status is None:
+        print 'No Cluster Status Returned'
         TroubleshootCephMon_ = TroubleshootCephMon(is_ceph_cli=False)
         TroubleshootCephMon_.troubleshoot_mon()
     else:
+        print cluster_status
         TroubleshootCephMon_ = TroubleshootCephMon(is_ceph_cli=True)
         TroubleshootCephMon_.troubleshoot_mon()
 

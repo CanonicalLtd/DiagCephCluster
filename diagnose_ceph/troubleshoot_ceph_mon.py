@@ -3,6 +3,7 @@ import os
 import re
 
 from helpers.exceptions import ConnectionFailedError, TimeoutError
+from helpers.helpers import MyStr
 from troubleshoot_ceph import TroubleshootCeph
 
 
@@ -18,7 +19,7 @@ class MonObject(object):
         if 'hostname' in kwargs:
             self.mon_id = kwargs['hostname']
         for key, value in kwargs.iteritems():
-            self.key = value
+            setattr(self, key, value)
 
     @classmethod
     def juju_machine(cls, public_addr, admin_socket, hostname, juju_name,
@@ -26,6 +27,10 @@ class MonObject(object):
         return cls(host=public_addr, ssh_status='LIVE', connection=None,
                    admin_socket=admin_socket, juju_id=juju_id,
                    juju_name=juju_name, hostname=hostname)
+
+    @property
+    def id(self):
+        return self.juju_id
 
 
 class TroubleshootCephMon(TroubleshootCeph):
@@ -167,7 +172,8 @@ class TroubleshootCephMon(TroubleshootCeph):
                         cmd = 'sudo systemctl restart ntp.service'
                     else:
                         cmd = 'sudo service ntp restart'
-                    out, err = self._execute_command(machine.connection, cmd)
+                    conn = machine if self.is_juju else machine.connection
+                    out, err = self._execute_command(conn, cmd, self.is_juju)
                     try:
                         self._get_eof(out, cmd)
                     except TimeoutError:
@@ -176,15 +182,15 @@ class TroubleshootCephMon(TroubleshootCeph):
                         print 'Restart successful for: ', mon
 
     def _detect_clock_skew(self, connection):
-        out, err = self._execute_command(connection, 'sudo ceph health')
+        out, err = self._execute_command(connection, 'sudo ceph health',
+                                         self.is_juju)
 
         try:
             self._get_eof(out, 'sudo ceph health')
         except TimeoutError:
             raise TimeoutError('sudo ceph health timed out')
 
-        status = out.read().split(' ', 1)
-
+        status = MyStr(out).read().split(' ', 1)
         if not (len(status) == 2 and status[0].strip() in self.BAD_HEALTH):
             return None
 
@@ -213,23 +219,22 @@ class TroubleshootCephMon(TroubleshootCeph):
                 self._restart_ceph_mon_service('start', machine.host)
 
     def _find_correct_monmap(self, machine_list):
-        mon_host = []
+        mon_host_id = []
         for machine in machine_list:
-            mon_host.append(machine.host)
-        mon_host.sort()
+            mon_host_id.append(machine.mon_id)
+        mon_host_id.sort()
         correct_mon_host = None
-
         for machine in machine_list:
             if (machine.ssh_status == 'LIVE' and
                machine.admin_socket is not None):
 
                 cmd = 'sudo ceph --admin-daemon /var/run/ceph/' +\
                     machine.admin_socket + ' mon_status'
-                out, err = self._execute_command(machine.connection, cmd)
-                monmap = eval(out.read())['monmap']['mons']
-                monmap_host = sorted([i['addr'].split(':')[0]
-                                     for i in monmap])
-                if monmap_host == mon_host:
+                conn = machine if self.is_juju else machine.connection
+                out, err = self._execute_command(conn, cmd, self.is_juju)
+                monmap = eval(MyStr(out).read())['monmap']['mons']
+                monmap_host_id = sorted([i['name'] for i in monmap])
+                if monmap_host_id == mon_host_id:
                     loc = '/tmp/monmap'
                     if correct_mon_host is None:
                         try:
@@ -238,8 +243,8 @@ class TroubleshootCephMon(TroubleshootCeph):
                             pass
                         else:
                             correct_mon_host = machine
+                            print machine
                     machine.is_monmap_correct = True
-
         if correct_mon_host is None:
             return None
         return loc
@@ -269,11 +274,12 @@ class TroubleshootCephMon(TroubleshootCeph):
             if machine.has_mon is True:
                 out, err = self._execute_command(machine, 'ls /var/run/ceph',
                                                  is_juju=True)
-                socket = self._find_mon_socket(str(out).read().split('\n'))
+                socket = self._find_mon_socket(MyStr(out).read().split('\n'))
                 machine = MonObject.juju_machine(machine.public_addr, socket,
-                                                 machine.hostname, machine.id,
-                                                 machine.name)
+                                                 machine.hostname,
+                                                 machine.name, machine.id)
                 machines.append(machine)
+        return machines
 
     def _get_machine_objects(self):
         mon_list = self._get_mon_list()
@@ -313,9 +319,10 @@ class TroubleshootCephMon(TroubleshootCeph):
 
     def _restart_dead_mon_daemons(self):
         (output, err) = self._execute_command(self.connection,
-                                              'sudo ceph mon_status')
+                                              'sudo ceph mon_status',
+                                              self.is_juju)
 
-        mon_status = eval(output.read())
+        mon_status = eval(MyStr(output).read())
         quorum_list = mon_status['quorum']
         mon_list = mon_status['monmap']['mons']
 
@@ -324,15 +331,21 @@ class TroubleshootCephMon(TroubleshootCeph):
                 if mon['rank'] not in quorum_list:
                     print '\n' + mon['name'] + ' not in quorum list,',
                     print 'restarting ceph services'
-                    mon_addr = mon['addr'].split(':')[0]
-
+                    if not self.is_juju:
+                        mon_addr = mon['addr'].split(':')[0]
+                    else:
+                        for machine in self.machines:
+                            if machine.mon_id == mon['name']:
+                                mon_addr = machine
+                                break
                     self._restart_ceph_mon_service('start', mon_addr)
 
     def _restart_ceph_mon_service(self, cmd, addr):
-        connection = self._get_connection(addr)
+        connection = addr if self.is_juju else self._get_connection(addr)
         if self.init_type in ['upstart', 'sysv-init']:
             cmd = 'sudo ' + cmd + ' ceph-mon-all'
         else:
             cmd = 'sudo systemctl ' + cmd + ' ceph-mon.service'
-        self._execute_command(connection, cmd)
+        self._execute_command(connection, cmd, self.is_juju)
+        addr = connection.host if self.is_juju else addr
         print addr + ': ' + cmd + ' successful'
