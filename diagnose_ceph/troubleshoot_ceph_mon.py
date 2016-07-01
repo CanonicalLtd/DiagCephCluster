@@ -1,5 +1,6 @@
 from ConfigParser import ConfigParser
 import os
+import subprocess
 import re
 
 from helpers.exceptions import ConnectionFailedError, TimeoutError
@@ -256,16 +257,27 @@ class TroubleshootCephMon(TroubleshootCeph):
             may timeout. In that case raise TimeoutError and try next
             correct node
         '''
-        self._restart_ceph_mon_service('stop', mon_host.host)
+        host = mon_host if self.is_juju else mon_host.host
 
-        cmd = 'sudo ceph mon getmap -o /tmp/monmap'
-        out, err = self._execute_command(mon_host.connection, cmd)
+        self._restart_ceph_mon_service('stop', host)
+        cmd = 'sudo ceph-mon -i ' + mon_host.mon_id + ' --extract-monmap '
+        cmd += '/tmp/monmap'
+        conn = mon_host if self.is_juju else mon_host.connection
+        out, err = self._execute_command(conn, cmd, self.is_juju)
+
         try:
             self._get_eof(out, cmd)
         except TimeoutError:
             raise TimeoutError('ceph mon getmap timed out')
-        mon_host.connection.open_sftp().get('/tmp/monmap', loc)
-        self._restart_ceph_mon_service('start', mon_host.host)
+        if self.is_juju:
+            cmd = 'juju1 scp ' + str(mon_host.id) + ':/tmp/monmap ' + loc
+            if self.is_juju:
+                out = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
+                                       stderr=subprocess.PIPE)
+            else:
+                mon_host.connection.open_sftp().get('/tmp/monmap', loc)
+
+        self._restart_ceph_mon_service('start', host)
 
     def _get_juju_machine_objects(self):
         # Here we assume all ceph/* have a mon service
