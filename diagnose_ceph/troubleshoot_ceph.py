@@ -32,15 +32,15 @@ class TroubleshootCeph(object):
     BAD_HEALTH = ['HEALTH_WARN']
     CURRENT_DIR = os.path.dirname(os.path.realpath(__file__))
     init_script = CURRENT_DIR + '/scripts/check_init.sh'
-    init_type = ''
     arch_script = CURRENT_DIR + '/scripts/find_processor_architecture.sh'
-    arch_type = ''
 
     def __init__(self):
         self.parser = self._get_opt_parser()
         cls = TroubleshootCeph
         cls.options, cls.arguments = self.parser.parse_args()
         cls.juju_version = None
+        cls.timeout = cls.options.timeout
+
         if cls.options.provider == 'juju':
             cls.juju_version = self._find_juju_version()
         elif (not (cls.options.host and cls.options.user) and
@@ -52,7 +52,8 @@ class TroubleshootCeph(object):
         if cls.juju_version is 'not_supported':
             raise JujuInstallationNotFoundError('juju not found/not supported')
         elif cls.juju_version == 'juju1' or cls.juju_version == 'juju2':
-            cls.juju_ceph_machines = self._get_all_juju_ceph_machines()
+            if not hasattr(cls, 'juju_ceph_machines'):
+                cls.juju_ceph_machines = self._get_all_juju_ceph_machines()
 
         if cls.options.provider == 'ssh':
             cls.is_juju = False
@@ -63,14 +64,14 @@ class TroubleshootCeph(object):
                 raise ConnectionFailedError('Couldnot connect to host')
         else:
             cls.is_juju = True
-
-        cls.init_type = self._get_init_type(cls.connection,
-                                            cls.is_juju).strip()
+        if not hasattr(cls, 'init_type'):
+            cls.init_type = self._get_init_type(cls.connection,
+                                                cls.is_juju).strip()
         if cls.init_type == 'none':
             raise InitSystemNotSupportedError()
-
-        cls.arch_type = self._get_arch_type(cls.connection,
-                                            cls.is_juju).strip()
+        if not hasattr(cls, 'arch_type'):
+            cls.arch_type = self._get_arch_type(cls.connection,
+                                                cls.is_juju).strip()
 
     def _get_all_machine_param(self, machine):
         id = machine['machine']
@@ -164,16 +165,24 @@ class TroubleshootCeph(object):
         return client
 
     @classmethod
-    def _execute_command(cls, connection, command, is_juju=False):
-        if is_juju is True:
+    def _execute_juju_command(cls, connection, command):
             from base64 import b64encode
             command = '`echo ' + b64encode(command) + ' | base64 --decode`'
-            cmd = 'juju1 run --machine ' + str(connection.id) + ' "' + command
-            cmd += '"'
+            cmd = 'juju1 run --machine ' + str(connection.id) + ' --timeout '
+            cmd += str(cls.timeout) + 's' + ' "' + command + '"'
             out = subprocess.Popen(cmd, shell=True,
                                    stdout=subprocess.PIPE,
                                    stderr=subprocess.PIPE)
             return out.communicate()
+
+    @classmethod
+    def _execute_command(cls, connection, command, is_juju=False):
+        if is_juju is True:
+            (out, err) = cls._execute_juju_command(connection, command)
+            if err.startswith('ERROR'):
+                raise TimeoutError(command + ' timed out')
+            else:
+                return (out, err)
         else:
             (stdin, stdout, stderr) = connection.exec_command(command)
             return (stdout, stderr)
@@ -182,9 +191,9 @@ class TroubleshootCeph(object):
         cls = TroubleshootCeph
         command = 'sudo ceph health'
         cluster_status = None
-        (output, err) = cls._execute_command(cls.connection, command,
-                                             is_juju=cls.is_juju)
         try:
+            (output, err) = cls._execute_command(cls.connection, command,
+                                                 is_juju=cls.is_juju)
             cls._get_eof(output, command)
             cluster_status = MyStr(output).read().split(' ')[0].strip()
         except TimeoutError as err:
