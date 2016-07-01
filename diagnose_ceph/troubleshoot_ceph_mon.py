@@ -207,17 +207,26 @@ class TroubleshootCephMon(TroubleshootCeph):
             if (machine.ssh_status == 'LIVE' and
                machine.is_monmap_correct is False):
                 print 'Injecting monmap to: ' + machine.host
+                conn = machine if self.is_juju else machine.host
+                self._restart_ceph_mon_service('stop', conn)
 
-                self._restart_ceph_mon_service('stop', machine.host)
+                if self.is_juju:
+                    cmd = 'juju1 scp ' + monmap_loc + ' ' + str(machine.id)
+                    cmd += ':/tmp/monmap'
+                    out = subprocess.Popen(cmd, shell=True,
+                                           stdout=subprocess.PIPE,
+                                           stderr=subprocess.PIPE)
+                else:
+                    machine.connection.open_sftp().put(monmap_loc,
+                                                       '/tmp/monmap')
 
-                machine.connection.open_sftp().put(monmap_loc,
-                                                   '/tmp/monmap')
                 cmd = 'sudo ceph-mon -i ' + machine.mon_id +\
                     ' --inject-monmap /tmp/monmap'
 
-                self._execute_command(machine.connection, cmd)
+                connection = machine if self.is_juju else machine.connection
+                self._execute_command(connection, cmd, self.is_juju)
 
-                self._restart_ceph_mon_service('start', machine.host)
+                self._restart_ceph_mon_service('start', conn)
 
     def _find_correct_monmap(self, machine_list):
         mon_host_id = []
@@ -244,8 +253,8 @@ class TroubleshootCephMon(TroubleshootCeph):
                             pass
                         else:
                             correct_mon_host = machine
-                            print machine
                     machine.is_monmap_correct = True
+
         if correct_mon_host is None:
             return None
         return loc
