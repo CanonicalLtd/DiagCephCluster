@@ -17,7 +17,6 @@ def run():
         print cluster_status
         TroubleshootCephMon_ = TroubleshootCephMon(is_ceph_cli=True)
         TroubleshootCephMon_.troubleshoot_mon()
-
     # If the script reaches here we check for osd issues
     # First lets check if the ceph cli is working
     cluster_status = TroubleshootCeph_.start_troubleshoot()

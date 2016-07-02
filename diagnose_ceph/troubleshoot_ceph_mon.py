@@ -17,6 +17,8 @@ class MonObject(object):
         self.ssh_status = ssh_status
         self.mon_id = None if admin_socket is None else admin_socket[9:-5]
         self.is_monmap_correct = False
+        if 'juju_id' in kwargs:
+            self.connection = self
         if 'hostname' in kwargs:
             self.mon_id = kwargs['hostname']
         for key, value in kwargs.iteritems():
@@ -86,7 +88,7 @@ class TroubleshootCephMon(TroubleshootCeph):
     def _restart_all_mon_daemons(self):
         for machine in self.machines:
             if machine.ssh_status == 'LIVE':
-                self._restart_ceph_mon_service('start', machine.host)
+                self._restart_ceph_mon_service('start', machine.connection)
 
     def _troubleshoot_mon_cli(self):
         '''
@@ -173,8 +175,8 @@ class TroubleshootCephMon(TroubleshootCeph):
                         cmd = 'sudo systemctl restart ntp.service'
                     else:
                         cmd = 'sudo service ntp restart'
-                    conn = machine if self.is_juju else machine.connection
-                    out, err = self._execute_command(conn, cmd, self.is_juju)
+                    out, err = self._execute_command(machine.connection, cmd,
+                                                     self.is_juju)
                     try:
                         self._get_eof(out, cmd)
                     except TimeoutError:
@@ -207,26 +209,22 @@ class TroubleshootCephMon(TroubleshootCeph):
             if (machine.ssh_status == 'LIVE' and
                machine.is_monmap_correct is False):
                 print 'Injecting monmap to: ' + machine.host
-                conn = machine if self.is_juju else machine.host
-                self._restart_ceph_mon_service('stop', conn)
+                self._restart_ceph_mon_service('stop', machine.connection)
 
                 if self.is_juju:
-                    cmd = 'juju1 scp ' + monmap_loc + ' ' + str(machine.id)
-                    cmd += ':/tmp/monmap'
-                    out = subprocess.Popen(cmd, shell=True,
-                                           stdout=subprocess.PIPE,
-                                           stderr=subprocess.PIPE)
+                    cmd = 'juju1 scp ' + monmap_loc + ' ' + str(machine.id) +\
+                        ':/tmp/monmap'
+                    subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE)
                 else:
                     machine.connection.open_sftp().put(monmap_loc,
                                                        '/tmp/monmap')
 
                 cmd = 'sudo ceph-mon -i ' + machine.mon_id +\
                     ' --inject-monmap /tmp/monmap'
+                self._execute_command(machine.connection, cmd, self.is_juju)
 
-                connection = machine if self.is_juju else machine.connection
-                self._execute_command(connection, cmd, self.is_juju)
-
-                self._restart_ceph_mon_service('start', conn)
+                self._restart_ceph_mon_service('start', machine.connection)
 
     def _find_correct_monmap(self, machine_list):
         mon_host_id = []
@@ -240,8 +238,8 @@ class TroubleshootCephMon(TroubleshootCeph):
 
                 cmd = 'sudo ceph --admin-daemon /var/run/ceph/' +\
                     machine.admin_socket + ' mon_status'
-                conn = machine if self.is_juju else machine.connection
-                out, err = self._execute_command(conn, cmd, self.is_juju)
+                out, err = self._execute_command(machine.connection, cmd,
+                                                 self.is_juju)
                 monmap = eval(MyStr(out).read())['monmap']['mons']
                 monmap_host_id = sorted([i['name'] for i in monmap])
                 if monmap_host_id == mon_host_id:
@@ -266,13 +264,11 @@ class TroubleshootCephMon(TroubleshootCeph):
             may timeout. In that case raise TimeoutError and try next
             correct node
         '''
-        host = mon_host if self.is_juju else mon_host.host
-
-        self._restart_ceph_mon_service('stop', host)
-        cmd = 'sudo ceph-mon -i ' + mon_host.mon_id + ' --extract-monmap '
-        cmd += '/tmp/monmap'
-        conn = mon_host if self.is_juju else mon_host.connection
-        out, err = self._execute_command(conn, cmd, self.is_juju)
+        self._restart_ceph_mon_service('stop', mon_host.connection)
+        cmd = 'sudo ceph-mon -i ' + mon_host.mon_id + ' --extract-monmap ' +\
+            '/tmp/monmap'
+        out, err = self._execute_command(mon_host.connection, cmd,
+                                         self.is_juju)
 
         try:
             self._get_eof(out, cmd)
@@ -281,12 +277,12 @@ class TroubleshootCephMon(TroubleshootCeph):
         if self.is_juju:
             cmd = 'juju1 scp ' + str(mon_host.id) + ':/tmp/monmap ' + loc
             if self.is_juju:
-                out = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
-                                       stderr=subprocess.PIPE)
+                subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE)
             else:
                 mon_host.connection.open_sftp().get('/tmp/monmap', loc)
 
-        self._restart_ceph_mon_service('start', host)
+        self._restart_ceph_mon_service('start', mon_host.connection)
 
     def _get_juju_machine_objects(self):
         # Here we assume all ceph/* have a mon service
@@ -354,19 +350,17 @@ class TroubleshootCephMon(TroubleshootCeph):
                     print 'restarting ceph services'
                     if not self.is_juju:
                         mon_addr = mon['addr'].split(':')[0]
+                        connection = self._get_connection(mon_addr)
                     else:
                         for machine in self.machines:
                             if machine.mon_id == mon['name']:
-                                mon_addr = machine
+                                connection = machine
                                 break
-                    self._restart_ceph_mon_service('start', mon_addr)
+                    self._restart_ceph_mon_service('start', connection)
 
-    def _restart_ceph_mon_service(self, cmd, addr):
-        connection = addr if self.is_juju else self._get_connection(addr)
+    def _restart_ceph_mon_service(self, cmd, connection):
         if self.init_type in ['upstart', 'sysv-init']:
             cmd = 'sudo ' + cmd + ' ceph-mon-all'
         else:
             cmd = 'sudo systemctl ' + cmd + ' ceph-mon.service'
         self._execute_command(connection, cmd, self.is_juju)
-        addr = connection.host if self.is_juju else addr
-        print addr + ': ' + cmd + ' successful'
