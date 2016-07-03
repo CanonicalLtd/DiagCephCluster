@@ -1,4 +1,4 @@
-paramiko
+paramiko>=2.0
 pycodestyle                                                                    
 unittest2                                                                      
 nose
