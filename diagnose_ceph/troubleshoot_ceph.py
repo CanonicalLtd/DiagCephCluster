@@ -15,13 +15,14 @@ from helpers.helpers import MyStr
 
 class JujuCephMachine(object):
     def __init__(self, name, id, public_addr, hostname, has_osd=False,
-                 has_mon=False):
+                 has_mon=False, internal_ip=None):
         self.name = name
         self.id = id
         self.public_addr = public_addr
         self.hostname = hostname
         self.has_osd = has_osd
         self.has_mon = has_mon
+        self.internal_ip = internal_ip
 
 
 class TroubleshootCeph(object):
@@ -40,6 +41,8 @@ class TroubleshootCeph(object):
         cls.options, cls.arguments = self.parser.parse_args()
         cls.juju_version = None
         cls.timeout = cls.options.timeout
+        if not hasattr(cls, 'cli_down'):
+            cls.cli_down = False
 
         if cls.options.provider == 'juju':
             cls.juju_version = self._find_juju_version()
@@ -50,20 +53,28 @@ class TroubleshootCeph(object):
             raise SSHCredsNotFoundError(msg)
 
         if cls.juju_version is 'not_supported':
-            raise JujuInstallationNotFoundError('juju not found/not supported')
+            raise JujuInstallationNotFoundError('juju not found/supported')
         elif cls.juju_version == 'juju1' or cls.juju_version == 'juju2':
+            home = os.path.expanduser('~')
+            if cls.juju_version == 'juju1':
+                cls.pem_location = os.path.join(home, '.juju/ssh/juju_id_rsa')
+            else:
+                loc = '.local/share/juju/ssh/juju_id_rsa'
+                cls.pem_location = os.path.join(home, loc)
             if not hasattr(cls, 'juju_ceph_machines'):
                 cls.juju_ceph_machines = self._get_all_juju_ceph_machines()
 
         if cls.options.provider == 'ssh':
-            cls.is_juju = False
+            if not hasattr(cls, 'is_juju'):
+                cls.is_juju = False
             try:
                 cls.connection = cls._get_connection(cls.options.host)
             except Exception as err:
                 print err
                 raise ConnectionFailedError('Couldnot connect to host')
         else:
-            cls.is_juju = True
+            if not hasattr(cls, 'is_juju'):
+                cls.is_juju = True
         if not hasattr(cls, 'init_type'):
             cls.init_type = self._get_init_type(cls.connection,
                                                 cls.is_juju).strip()
@@ -79,8 +90,14 @@ class TroubleshootCeph(object):
         cmd = 'juju1 run --machine ' + str(id) + ' "cat /etc/hostname"'
         proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE)
+
         hostname = proc.communicate()[0].strip('\n')
-        return id, public_addr, hostname
+        cmd = 'juju1 run --machine ' + str(id) + ' "host ' + hostname + ' "'
+        proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+        i_ip = proc.communicate()[0].strip('\n').split(' ')[-1]
+
+        return id, public_addr, hostname, i_ip
 
     def _get_all_juju_ceph_machines(self):
         cls = TroubleshootCeph
@@ -93,24 +110,26 @@ class TroubleshootCeph(object):
         juju_machines = []
         for name, val in machine_list['services']['ceph']['units'].iteritems():
             jujuname = name
-            id, public_addr, hostname = self._get_all_machine_param(val)
+            id, public_addr, hostname, i_ip = self._get_all_machine_param(val)
             machine = JujuCephMachine(jujuname, id, public_addr, hostname,
-                                      has_mon=True)
+                                      has_mon=True, internal_ip=i_ip)
 
             if int(id) < leader_id:
                 leader_id, cls.connection = int(id), machine
 
             juju_machines.append(machine)
-            print 'Found - ', hostname, '-', jujuname, '-', public_addr
+            print 'Found - ', hostname, '-', jujuname, '-', public_addr, '-',
+            print i_ip
 
         ceph_osd = machine_list['services']['ceph-osd']['units']
         for name, val in ceph_osd.iteritems():
-                jujuname = name
-                id, public_addr, hostname = self._get_all_machine_param(val)
-                machine = JujuCephMachine(jujuname, id, public_addr, hostname,
-                                          has_osd=True)
-                juju_machines.append(machine)
-                print 'Found - ', hostname, '-', jujuname, '-', public_addr
+            jujuname = name
+            id, public_addr, hostname, i_ip = self._get_all_machine_param(val)
+            machine = JujuCephMachine(jujuname, id, public_addr, hostname,
+                                      has_osd=True, internal_ip=i_ip)
+            juju_machines.append(machine)
+            print 'Found - ', hostname, '-', jujuname, '-', public_addr, '-',
+            print i_ip
         return juju_machines
 
     def _find_juju_version(self):
@@ -142,7 +161,7 @@ class TroubleshootCeph(object):
 
         parser = optparse.OptionParser(description=desc)
         parser.add_option('-H', '--host', dest='host', default=None)
-        parser.add_option('-u', '--user', dest='user', default=None)
+        parser.add_option('-u', '--user', dest='user', default='ubuntu')
         parser.add_option('-p', '--pass', dest='password', default=None)
         parser.add_option('-P', '--provider', dest='provider', default='ssh',
                           choices=['ssh', 'juju'],
@@ -187,6 +206,13 @@ class TroubleshootCeph(object):
             (stdin, stdout, stderr) = connection.exec_command(command)
             return (stdout, stderr)
 
+    @classmethod
+    def _init_cli_down(cls):
+        cls.options.ssh_key = cls.pem_location
+        cls.is_juju = False
+        cls.cli_down = True
+        cls.connection = cls._get_connection(cls.connection.public_addr)
+
     def start_troubleshoot(self):
         cls = TroubleshootCeph
         command = 'sudo ceph health'
@@ -199,6 +225,22 @@ class TroubleshootCeph(object):
         except TimeoutError as err:
             # ceph cli is not working i.e. quorum is not being established
             # hence we need to use ceph admin sockets
+            print 'Please note that ceph cli is not working and you selected ',
+            print 'juju as provider.'
+            print 'We will use ssh(not juju) to connect to cluster.'
+            print 'Currently this requires vanilla installation of juju(with ',
+            print 'ssh keys are default location and user named ubuntu).'
+
+            print '(yes/no) (default yes)?',
+            response = raw_input()
+            if response == 'yes' or response == '':
+                print 'proceeding ',
+                for i in range(20):
+                    sys.stdout.write('.')
+                print '\n'
+                cls._init_cli_down()
+            else:
+                exit()
             return None
         return cluster_status
 
@@ -237,6 +279,7 @@ class TroubleshootCeph(object):
                 print 'retrying status'
             else:
                 status = MyStr(out).read().split(' ')[0].strip()
+                print status
                 if status == 'HEALTH_OK':
                     return status
         return status

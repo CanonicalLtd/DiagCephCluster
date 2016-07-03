@@ -85,6 +85,10 @@ class TroubleshootCephOsd(TroubleshootCeph):
                                                         in_cluster)
                 else:
                     try:
+                        if self.cli_down:
+                            for m in self.juju_ceph_machines:
+                                if m.hostname == host:
+                                    host = m.public_addr
                         conn = self._get_connection(host)
                     except ConnectionFailedError as err:
                         osd_obj = OsdObject(host, node['name'], node['id'],
@@ -93,7 +97,6 @@ class TroubleshootCephOsd(TroubleshootCeph):
 
                         osd_obj = OsdObject(host, node['name'], node['id'],
                                             True, status, in_cluster, conn)
-
                 osd_objects.append(osd_obj)
         return osd_objects
 

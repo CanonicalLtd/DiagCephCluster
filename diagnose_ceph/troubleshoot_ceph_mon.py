@@ -88,6 +88,7 @@ class TroubleshootCephMon(TroubleshootCeph):
     def _restart_all_mon_daemons(self):
         for machine in self.machines:
             if machine.ssh_status == 'LIVE':
+                print 'Restarting machine ' + machine.host
                 self._restart_ceph_mon_service('start', machine.connection)
 
     def _troubleshoot_mon_cli(self):
@@ -302,17 +303,22 @@ class TroubleshootCephMon(TroubleshootCeph):
         machines = []
 
         for i in mon_list:
+            addr = i
+            if self.cli_down:
+                for m in self.juju_ceph_machines:
+                    if m.internal_ip == i:
+                        addr = m.public_addr
             try:
-                connection = self._get_connection(i)
+                connection = self._get_connection(addr)
             except ConnectionFailedError as err:
-                dead_mon = MonObject(i, 'DEAD')
+                dead_mon = MonObject(addr, 'DEAD')
                 machines.append(dead_mon)
             else:
-
                 out, err = self._execute_command(connection,
-                                                 'ls /var/run/ceph/')
+                                                 'ls /var/run/ceph/',
+                                                 self.is_juju)
                 socket = self._find_mon_socket(out.read().split('\n'))
-                live_mon = MonObject(i, 'LIVE', connection, socket)
+                live_mon = MonObject(addr, 'LIVE', connection, socket)
                 machines.append(live_mon)
         return machines
 
