@@ -87,12 +87,12 @@ class TroubleshootCeph(object):
     def _get_all_machine_param(self, machine):
         id = machine['machine']
         public_addr = machine['public-address']
-        cmd = 'juju1 run --machine ' + str(id) + ' "cat /etc/hostname"'
+        cmd = 'juju run --machine ' + str(id) + ' "cat /etc/hostname"'
         proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE)
 
         hostname = proc.communicate()[0].strip('\n')
-        cmd = 'juju1 run --machine ' + str(id) + ' "host ' + hostname + ' "'
+        cmd = 'juju run --machine ' + str(id) + ' "host ' + hostname + ' "'
         proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE)
         i_ip = proc.communicate()[0].strip('\n').split(' ')[-1]
@@ -104,7 +104,7 @@ class TroubleshootCeph(object):
         leader_id = sys.maxint
         cls.connection = None
 
-        proc = subprocess.Popen('juju1 status --format json', shell=True,
+        proc = subprocess.Popen('juju status --format json', shell=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         machine_list = json.loads(proc.communicate()[0])
         juju_machines = []
@@ -133,7 +133,7 @@ class TroubleshootCeph(object):
         return juju_machines
 
     def _find_juju_version(self):
-        proc = subprocess.Popen('juju1 --version', shell=True,
+        proc = subprocess.Popen('juju --version', shell=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout = proc.communicate()[0].strip('\n')
         if re.search(r'^2.*', stdout) is not None:
@@ -187,7 +187,7 @@ class TroubleshootCeph(object):
     def _execute_juju_command(cls, connection, command):
             from base64 import b64encode
             command = '`echo ' + b64encode(command) + ' | base64 --decode`'
-            cmd = 'juju1 run --machine ' + str(connection.id) + ' --timeout '
+            cmd = 'juju run --machine ' + str(connection.id) + ' --timeout '
             cmd += str(cls.timeout) + 's' + ' "' + command + '"'
             out = subprocess.Popen(cmd, shell=True,
                                    stdout=subprocess.PIPE,

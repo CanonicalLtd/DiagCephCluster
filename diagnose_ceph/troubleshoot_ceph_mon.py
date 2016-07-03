@@ -213,7 +213,7 @@ class TroubleshootCephMon(TroubleshootCeph):
                 self._restart_ceph_mon_service('stop', machine.connection)
 
                 if self.is_juju:
-                    cmd = 'juju1 scp ' + monmap_loc + ' ' + str(machine.id) +\
+                    cmd = 'juju scp ' + monmap_loc + ' ' + str(machine.id) +\
                         ':/tmp/monmap'
                     subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE)
@@ -275,7 +275,7 @@ class TroubleshootCephMon(TroubleshootCeph):
             self._get_eof(out, cmd)
         except TimeoutError:
             raise TimeoutError('ceph mon getmap timed out')
-            cmd = 'juju1 scp ' + str(mon_host.id) + ':/tmp/monmap ' + loc
+            cmd = 'juju scp ' + str(mon_host.id) + ':/tmp/monmap ' + loc
             if self.is_juju:
                 subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE)
