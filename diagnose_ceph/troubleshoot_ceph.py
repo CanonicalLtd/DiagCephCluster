@@ -157,7 +157,7 @@ class TroubleshootCeph(object):
                 'Login method supported are: \n'
                 'username + password + hostname, '
                 'username + hostname + ssh_key_location, '
-                'juju #TODO')
+                'or use juju with provider flag')
 
         parser = optparse.OptionParser(description=desc)
         parser.add_option('-H', '--host', dest='host', default=None)
