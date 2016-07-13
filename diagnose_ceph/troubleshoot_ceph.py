@@ -84,7 +84,7 @@ class TroubleshootCeph(object):
             cls.arch_type = self._get_arch_type(cls.connection,
                                                 cls.is_juju).strip()
 
-    def _get_all_machine_param(self, machine):
+    def _get_machine_param(self, machine):
         id = machine['machine']
         public_addr = machine['public-address']
         cmd = 'juju run --machine ' + str(id) + ' "cat /etc/hostname"'
@@ -106,36 +106,57 @@ class TroubleshootCeph(object):
 
         proc = subprocess.Popen('juju status --format json', shell=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        machine_list = json.loads(proc.communicate()[0])
+
+        try:
+            machine_list = json.loads(proc.communicate()[0])
+        except ValueError:
+            print 'Could not fetch machines from juju cli, aborting'
+            exit()
+
         juju_machines = []
         for name, val in machine_list['services']['ceph']['units'].iteritems():
             jujuname = name
-            id, public_addr, hostname, i_ip = self._get_all_machine_param(val)
-            machine = JujuCephMachine(jujuname, id, public_addr, hostname,
-                                      has_mon=True, internal_ip=i_ip)
+            try:
+                id, public_addr, hostname, i_ip = self._get_machine_param(val)
+            except ValueError:
+                print 'Could not fetch details for ', val
+            else:
+                machine = JujuCephMachine(jujuname, id, public_addr, hostname,
+                                          has_mon=True, internal_ip=i_ip)
 
-            if int(id) < leader_id:
-                leader_id, cls.connection = int(id), machine
+                if int(id) < leader_id:
+                    leader_id, cls.connection = int(id), machine
 
-            juju_machines.append(machine)
-            print 'Found - ', hostname, '-', jujuname, '-', public_addr, '-',
-            print i_ip
+                juju_machines.append(machine)
+                print 'Found - ', hostname, '-', jujuname, '-', public_addr,
+                print '-', i_ip
 
         ceph_osd = machine_list['services']['ceph-osd']['units']
         for name, val in ceph_osd.iteritems():
             jujuname = name
-            id, public_addr, hostname, i_ip = self._get_all_machine_param(val)
-            machine = JujuCephMachine(jujuname, id, public_addr, hostname,
-                                      has_osd=True, internal_ip=i_ip)
-            juju_machines.append(machine)
-            print 'Found - ', hostname, '-', jujuname, '-', public_addr, '-',
-            print i_ip
+            try:
+                id, public_addr, hostname, i_ip = self._get_machine_param(val)
+            except ValueError:
+                print 'Could not fetch details for ', val
+            else:
+                machine = JujuCephMachine(jujuname, id, public_addr, hostname,
+                                          has_osd=True, internal_ip=i_ip)
+                juju_machines.append(machine)
+                print 'Found - ', hostname, '-', jujuname, '-', public_addr,
+                print '-', i_ip
+
         return juju_machines
 
     def _find_juju_version(self):
         proc = subprocess.Popen('juju --version', shell=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout = proc.communicate()[0].strip('\n')
+
+        try:
+            stdout = proc.communicate()[0].strip('\n')
+        except ValueError:
+            print ' Could not get juju version, aborting'
+            exit()
+
         if re.search(r'^2.*', stdout) is not None:
             return 'juju2'
         elif re.search(r'^1.*', stdout) is not None:
