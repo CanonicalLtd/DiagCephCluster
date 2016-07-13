@@ -114,7 +114,11 @@ class TroubleshootCeph(object):
             exit()
 
         juju_machines = []
-        for name, val in machine_list['services']['ceph']['units'].iteritems():
+
+        ceph_mon = machine_list['services']['ceph']['units']
+        ceph_mon = {} if ceph_mon is None else ceph_mon
+
+        for name, val in ceph_mon.iteritems():
             jujuname = name
             try:
                 id, public_addr, hostname, i_ip = self._get_machine_param(val)
@@ -132,6 +136,8 @@ class TroubleshootCeph(object):
                 print '-', i_ip
 
         ceph_osd = machine_list['services']['ceph-osd']['units']
+        ceph_osd = {} if ceph_osd is None else ceph_osd
+
         for name, val in ceph_osd.iteritems():
             jujuname = name
             try:
