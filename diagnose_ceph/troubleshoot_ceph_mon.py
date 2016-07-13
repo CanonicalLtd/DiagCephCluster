@@ -9,6 +9,28 @@ from troubleshoot_ceph import TroubleshootCeph
 
 
 class MonObject(object):
+    """ Constructs an object with all attributes of a ceph-mon machine.
+
+        Note:
+            To construct an object when ssh is to be used use __init__().
+            To construct an object when juju cli is used use juju_machine().
+
+        Args:
+            host (str): ip address of the machine.
+            ssh_status (bool): ssh_status of the machine(True/False).
+            connection (:obj:`paramiko_conn_obj/MonObject_instance`):
+                In case of ssh enabled diagnosis connection is paramiko
+                connection object. In case of juju cli diagnosis connection
+                is an instance of the MonObject itself as that is used for
+                establishing connection(refer _execute_command in
+                TroubleshootCeph class).
+            admin_socket (str): admin_socket daemon running on the ceph machine
+                This is only in working state when daemon is running else None.
+            **kwargs (dict): Additional parameters required when object is
+                initialized using juju_machine method. Juju cli requires an
+                additional id attribute and juju machine_name attribute.
+    """
+
     def __init__(self, host, ssh_status, connection=None, admin_socket=None,
                  **kwargs):
         self.host = host

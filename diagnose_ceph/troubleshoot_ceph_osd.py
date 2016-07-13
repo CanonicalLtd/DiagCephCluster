@@ -6,6 +6,27 @@ from troubleshoot_ceph import TroubleshootCeph
 
 
 class OsdObject(object):
+    """ Constructs an object with all attributes of a ceph-osd machine.
+
+        Note:
+            To construct an object when ssh is to be used use __init__().
+            To construct an object when juju cli is used use juju_machine().
+
+        Args:
+            host (str): ip address of the machine.
+            name (str): osd_name give by ceph cluster(ex osd.0).
+            osd_id (str): osd_id given by ceph cluster.
+            ssh_status (bool): ssh_status of the machine(True/False).
+            connection (:obj:`paramiko_conn_obj`): In case of ssh enabled
+                diagnosis connection is paramiko connection object.
+            status (:str(`'up'/'down'`): is ceph-osd up or down
+            in_cluster (:str(`'in'/'out'): is ceph-osd in or out of the
+                cluster.
+            **kwargs (dict): Additional parameters required when object is
+                initialized using juju_machine method. Juju cli requires an
+                additional id attribute and juju machine_name attribute.
+
+    """
     def __init__(self, host, name, osd_id, ssh_status, status, in_cluster,
                  connection=None, **kwargs):
         self.name = name
