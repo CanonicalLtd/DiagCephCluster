@@ -55,26 +55,42 @@ class TroubleshootCeph(object):
         if cls.juju_version is 'not_supported':
             raise JujuInstallationNotFoundError('juju not found/supported')
         elif cls.juju_version == 'juju1' or cls.juju_version == 'juju2':
-            home = os.path.expanduser('~')
-            if cls.juju_version == 'juju1':
-                cls.pem_location = os.path.join(home, '.juju/ssh/juju_id_rsa')
-            else:
-                loc = '.local/share/juju/ssh/juju_id_rsa'
-                cls.pem_location = os.path.join(home, loc)
-            if not hasattr(cls, 'juju_ceph_machines'):
-                cls.juju_ceph_machines = self._get_all_juju_ceph_machines()
+            self._init_juju_flavor_specific_variables()
 
         if cls.options.provider == 'ssh':
-            if not hasattr(cls, 'is_juju'):
-                cls.is_juju = False
-            try:
-                cls.connection = cls._get_connection(cls.options.host)
-            except Exception as err:
-                print err
-                raise ConnectionFailedError('Couldnot connect to host')
+            self._init_ssh_variables()
         else:
-            if not hasattr(cls, 'is_juju'):
-                cls.is_juju = True
+            self._init_juju_common_variables()
+
+        self._init_common_variables()
+
+    def _init_ssh_variables(self):
+        cls = TroubleshootCeph
+        if not hasattr(cls, 'is_juju'):
+            cls.is_juju = False
+        try:
+            cls.connection = cls._get_connection(cls.options.host)
+        except Exception:
+            raise ConnectionFailedError('Couldnot connect to host')
+
+    def _init_juju_flavor_specific_variables(self):
+        cls = TroubleshootCeph
+        home = os.path.expanduser('~')
+        if cls.juju_version == 'juju1':
+            cls.pem_location = os.path.join(home, '.juju/ssh/juju_id_rsa')
+        else:
+            loc = '.local/share/juju/ssh/juju_id_rsa'
+            cls.pem_location = os.path.join(home, loc)
+
+    def _init_juju_common_variables(self):
+        cls = TroubleshootCeph
+        if not hasattr(cls, 'juju_ceph_machines'):
+            cls.juju_ceph_machines = self._get_all_juju_ceph_machines()
+        if not hasattr(cls, 'is_juju'):
+            cls.is_juju = True
+
+    def _init_common_variables(self):
+        cls = TroubleshootCeph
         if not hasattr(cls, 'init_type'):
             cls.init_type = self._get_init_type(cls.connection,
                                                 cls.is_juju).strip()
