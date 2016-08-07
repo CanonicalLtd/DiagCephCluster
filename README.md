@@ -43,5 +43,6 @@ diagnose_ceph --provider juju
     -P (juju, ssh)  --provider (juju, ssh)                              the provider to use(juju doesnt require most of the above parameters) 
     -k ssh_key_location --ssh_key ssh_key_location                      the address in the filesystem where the private key is located
     -t timeout --timeout timeout                                        the time for which to poll for status for the ceph health command(default=30)
+    -a --advance                                                        option to toggle advance probe(like monmap replacement) (default=False)
 ## License
 MIT Licensed
