@@ -41,6 +41,7 @@ class TroubleshootCeph(object):
         cls.options, cls.arguments = self.parser.parse_args()
         cls.juju_version = None
         cls.timeout = cls.options.timeout
+        cls.advance = cls.options.advance
         if not hasattr(cls, 'cli_down'):
             cls.cli_down = False
 
@@ -211,6 +212,8 @@ class TroubleshootCeph(object):
                           help='currently supports ssh')
         parser.add_option('-k', '--ssh_key', dest='ssh_key', default=None)
         parser.add_option('-t', '--timeout', dest='timeout', default=30)
+        parser.add_option('-a', '--advance', action='store_true',
+                          dest='advance', default=False)
         return parser
 
     @classmethod

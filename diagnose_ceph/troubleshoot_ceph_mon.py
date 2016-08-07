@@ -169,26 +169,27 @@ class TroubleshootCephMon(TroubleshootCeph):
         else:
             print "Restarting ntpd didn't work, probing deeper"
 
-        print 'Inject correct monmap to machines with incorrect monmap?'
-        print '(yes/no) (default no)?',
-        response = raw_input()
+        if self.advance:  # if the user desires advance checks.
+            print 'Inject correct monmap to machines with incorrect monmap?'
+            print '(yes/no) (default no)?',
+            response = raw_input()
 
-        if response != 'yes':
-            print 'not proceeding with updating machines, aborting'
-            return
+            if response != 'yes':
+                print 'not proceeding with updating machines, aborting'
+                return
 
-        monmap_loc = self._find_correct_monmap(self.machines)
-        if monmap_loc is None:
-            print 'No Mon has correct monmap, recovery impossible, aborting'
-            return
+            monmap_loc = self._find_correct_monmap(self.machines)
+            if monmap_loc is None:
+                print 'No Mon has correct monmap, recovery impossible, abort'
+                return
 
-        self._inject_mon_map(monmap_loc, self.machines)
+            self._inject_mon_map(monmap_loc, self.machines)
 
-        if self.poll_ceph_status(self.connection) == 'HEALTH_OK':
-            print 'Ceph Cluster working again :-)'
-            exit()
-        else:
-            print "Injecting Monmap didn't work, probably Network issue"
+            if self.poll_ceph_status(self.connection) == 'HEALTH_OK':
+                print 'Ceph Cluster working again :-)'
+                exit()
+            else:
+                print "Injecting Monmap didn't work, probably Network issue"
 
     def _correct_skew(self, skew_list):
         for mon in skew_list:
