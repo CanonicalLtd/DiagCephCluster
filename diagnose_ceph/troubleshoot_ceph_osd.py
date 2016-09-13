@@ -143,7 +143,7 @@ class TroubleshootCephOsd(TroubleshootCeph):
                                                      out.read().split('\n')))
 
     def _poll_osd_status(self, connection):
-        tries = self.options.timeout / 10
+        tries = int(self.options.timeout) / 10
         status = None
         cmd = 'sudo ceph osd stat --format json'
         for i in range(tries):

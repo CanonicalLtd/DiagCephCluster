@@ -314,7 +314,7 @@ class TroubleshootCeph(object):
 
     @classmethod
     def poll_ceph_status(cls, connection, command='sudo ceph health'):
-        tries = cls.options.timeout / 10
+        tries = int(cls.options.timeout) / 10
         status = None
         for i in range(tries):
             (out, err) = cls._execute_command(connection, command,
